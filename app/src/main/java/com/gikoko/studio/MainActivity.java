@@ -1281,17 +1281,36 @@ public class MainActivity extends Activity {
 
     private void showNativeBuildGuide() {
         beginPage("LOCAL NATIVE BUILD GUIDE");
-        heading("Android Native Project");
-        paragraph("This app can import and stage an Android source ZIP locally. Building an APK from Gradle source requires a compatible JDK, Android SDK platform/build-tools and all Gradle/Maven dependencies already installed or cached. Redmi 9A ARMv7 has limited RAM/storage; this Studio APK does not bundle a full Android SDK, so it cannot honestly promise a one-tap fully offline native build by itself.");
-        paragraph("Recommended local handoff: export the source ZIP, extract it in Termux, then run Gradle assembleDebug after you have configured a compatible Android SDK and downloaded dependencies once. Offline builds work only after dependencies are cached.");
-        String command = "termux-setup-storage\nmkdir -p ~/GI-STUDIO-BUILDS && cd ~/GI-STUDIO-BUILDS\n# Copy/extract your exported ZIP here, then enter the project folder\nunzip ~/storage/downloads/GI-Android-Project-Source.zip -d project\ncd project\ngradle --offline assembleDebug";
-        button("COPY TERMUX BUILD COMMAND", () -> {
-            ClipboardManager cm = (ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(ClipData.newPlainText("Termux build command", command));
-            toast("Command copied. Review/edit ZIP filename and SDK setup before running.");
-        });
+        heading("ANDROID APK BUILD • TERMUX");
+        paragraph("The app cannot embed the full Android SDK/JDK safely inside its APK. It can hand off source to Termux, prepare commands and help you build. Redmi 9A is ARMv7 with limited RAM/storage; Android SDK platform availability and Gradle compatibility must be checked on-device.");
+        heading("STEP 1 • INSTALL AVAILABLE TERMUX TOOLS");
+        paragraph("Internet is needed for initial package setup and the first dependency download. Later builds can use Gradle offline mode if every required artifact has been cached.");
+        String setup = "pkg update && pkg upgrade -y\npkg install -y openjdk-17 gradle git unzip zip aapt apksigner";
+        button("COPY TOOLCHAIN SETUP COMMAND", () -> copyTermuxText("Termux setup", setup));
+        button("OPEN TERMUX", () -> launchTermux());
+        heading("STEP 2 • EXPORT PROJECT");
+        paragraph("Export the Android project ZIP from this app, then make it accessible in Termux Download storage. Update the ZIP filename in the command if needed.");
+        String command = "termux-setup-storage\nmkdir -p ~/GI-STUDIO-BUILDS && cd ~/GI-STUDIO-BUILDS\nunzip -o ~/storage/downloads/GI-Android-Project-Source.zip -d project\ncd project\n# First build with internet to cache dependencies:\nif [ -f ./gradlew ]; then chmod +x ./gradlew && ./gradlew assembleDebug; else gradle assembleDebug; fi\n# Subsequent offline build after dependencies are cached:\nif [ -f ./gradlew ]; then ./gradlew --offline assembleDebug; else gradle --offline assembleDebug; fi\nfind . -path '*/build/outputs/apk/*/*.apk' -type f -print";
+        button("COPY BUILD COMMANDS", () -> copyTermuxText("Termux build commands", command));
         button("EXPORT SOURCE ZIP", () -> exportNativeProject());
         button("BACK TO BUILD CENTER", () -> showLocalBuildCenter());
+    }
+
+    private void copyTermuxText(String label, String value) {
+        ClipboardManager cm = (ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+        cm.setPrimaryClip(ClipData.newPlainText(label, value));
+        toast(label + " copied to clipboard.");
+    }
+
+    private void launchTermux() {
+        try {
+            Intent launch = getPackageManager().getLaunchIntentForPackage("com.termux");
+            if (launch != null) startActivity(launch);
+            else {
+                openUrl("https://github.com/termux/termux-app/releases");
+                toast("Termux is not installed. Opened official releases.");
+            }
+        } catch (Exception e) { toast("Cannot launch Termux: " + e.getMessage()); }
     }
 
     private void showBuildCenter() {
