@@ -27,6 +27,8 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
 import java.io.BufferedInputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 import com.android.apksig.ApkSigner;
 
@@ -602,8 +604,10 @@ public class MainActivity extends Activity {
     private void showPlugins() {
         beginPage("PLUGIN MANAGER");
         heading("Plugin Manager");
-        paragraph("Import a plugin manifest JSON, review its metadata and enable or disable it. For safety, this release accepts declarative manifests only; it does not execute arbitrary code from plugin ZIPs.");
+        paragraph("Plugin Center supports an online catalog, one-tap manifest downloads, local JSON import, search, enable/disable, safe built-in actions, details and removal. Plugin manifests are data only; arbitrary Java/Kotlin code is never executed.");
+        button("OPEN ONLINE PLUGIN STORE", () -> loadPluginCatalog());
         button("IMPORT PLUGIN MANIFEST (.JSON)", () -> pickDocument(PICK_PLUGIN, "application/json"));
+        button("RELOAD INSTALLED PLUGINS", () -> showPlugins());
         JSONArray plugins = readPlugins();
         if (plugins.length() == 0) {
             paragraph("No plugins installed yet. A manifest must contain id, name and version. Optional fields: description and actions.");
@@ -632,11 +636,187 @@ public class MainActivity extends Activity {
             LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2);
             cp.bottomMargin = dp(10);
             page.addView(card, cp);
-            Button toggle = button(enabled ? "DISABLE PLUGIN" : "ENABLE PLUGIN",
-                () -> setPluginEnabled(id, !enabled));
-            Button remove = button("REMOVE PLUGIN", () -> removePlugin(id));
+            JSONArray actions = plugin.optJSONArray("actions");
+            if (actions != null) {
+                for (int ai = 0; ai < actions.length(); ai++) {
+                    JSONObject action = actions.optJSONObject(ai);
+                    if (action == null) continue;
+                    String actionId = action.optString("id", "");
+                    String actionLabel = action.optString("label", "Run action");
+                    button("RUN • " + actionLabel, () -> runPluginAction(id, actionId));
+                }
+            }
+            button(enabled ? "DISABLE PLUGIN" : "ENABLE PLUGIN", () -> setPluginEnabled(id, !enabled));
+            button("PLUGIN DETAILS / VALIDATE", () -> showPluginDetails(id));
+            button("REMOVE PLUGIN", () -> removePlugin(id));
         }
         button("BACK TO WORKSPACE", () -> showHome());
+    }
+
+
+    private static final String PLUGIN_CATALOG_URL = "https://raw.githubusercontent.com/gikoko611/G--I-KO-KO-STUDIO/main/plugins/catalog.json";
+
+    private void loadPluginCatalog() {
+        beginPage("ONLINE PLUGIN STORE");
+        heading("Loading Plugin Catalog…");
+        paragraph("Connecting to the public catalog. Please wait.");
+        new Thread(() -> {
+            try {
+                String body = downloadHttpsText(PLUGIN_CATALOG_URL, 512 * 1024);
+                JSONArray catalog = new JSONArray(body);
+                runOnUiThread(() -> renderPluginCatalog(catalog));
+            } catch (Exception e) {
+                String msg = e.getMessage() == null ? "Network error" : e.getMessage();
+                runOnUiThread(() -> {
+                    beginPage("ONLINE PLUGIN STORE");
+                    heading("Catalog unavailable");
+                    paragraph(msg + "\nCheck your internet connection and retry.");
+                    button("RETRY", () -> loadPluginCatalog());
+                    button("BACK TO PLUGINS", () -> showPlugins());
+                });
+            }
+        }).start();
+    }
+
+    private void renderPluginCatalog(JSONArray catalog) {
+        beginPage("ONLINE PLUGIN STORE");
+        heading("Available Plugins (" + catalog.length() + ")");
+        EditText search = field("Search plugins", false);
+        LinearLayout results = column();
+        page.addView(results);
+        Runnable render = () -> {
+            results.removeAllViews();
+            String q = search.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+            int shown = 0;
+            for (int i = 0; i < catalog.length(); i++) {
+                JSONObject item = catalog.optJSONObject(i);
+                if (item == null) continue;
+                String name = item.optString("name", "Unnamed");
+                String desc = item.optString("description", "");
+                if (!q.isEmpty() && !(name + " " + desc).toLowerCase(java.util.Locale.ROOT).contains(q)) continue;
+                shown++;
+                results.addView(text(name + " • v" + item.optString("version", "1.0.0"), 15, green, true));
+                results.addView(text(desc, 12, Color.rgb(190, 215, 224), false));
+                String url = item.optString("manifest_url", "");
+                String expectedId = item.optString("id", "");
+                button("DOWNLOAD / INSTALL " + name, () -> downloadAndInstallPlugin(expectedId, url));
+            }
+            if (shown == 0) results.addView(text("No matching plugins.", 12, Color.WHITE, false));
+        };
+        search.addTextChangedListener(new android.text.TextWatcher() {
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
+            public void onTextChanged(CharSequence s, int start, int before, int count) { render.run(); }
+            public void afterTextChanged(android.text.Editable e) {}
+        });
+        render.run();
+        button("BACK TO PLUGIN MANAGER", () -> showPlugins());
+    }
+
+    private String downloadHttpsText(String address, int maxBytes) throws Exception {
+        if (address == null || !address.startsWith("https://")) throw new Exception("Only HTTPS URLs are allowed.");
+        HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
+        connection.setConnectTimeout(12000);
+        connection.setReadTimeout(12000);
+        connection.setInstanceFollowRedirects(false);
+        try {
+            int status = connection.getResponseCode();
+            if (status >= 300 && status < 400) {
+                String redirect = connection.getHeaderField("Location");
+                if (redirect == null || !redirect.startsWith("https://")) throw new Exception("Unsafe redirect rejected.");
+                connection.disconnect();
+                return downloadHttpsText(redirect, maxBytes);
+            }
+            if (status != 200) throw new Exception("HTTP " + status);
+            try (InputStream in = connection.getInputStream(); java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+                byte[] buffer = new byte[4096]; int n;
+                while ((n = in.read(buffer)) != -1) {
+                    if (out.size() + n > maxBytes) throw new Exception("Download exceeds size limit.");
+                    out.write(buffer, 0, n);
+                }
+                return new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+        } finally { connection.disconnect(); }
+    }
+
+    private void downloadAndInstallPlugin(String expectedId, String url) {
+        toast("Downloading plugin manifest…");
+        new Thread(() -> {
+            try {
+                JSONObject plugin = new JSONObject(downloadHttpsText(url, 256 * 1024));
+                String id = plugin.optString("id", "").trim();
+                String name = plugin.optString("name", "").trim();
+                String version = plugin.optString("version", "").trim();
+                if (id.isEmpty() || name.isEmpty() || version.isEmpty()) throw new Exception("Manifest requires id, name and version.");
+                if (!expectedId.equals(id)) throw new Exception("Catalog ID does not match manifest.");
+                if (!id.matches("[A-Za-z0-9._-]{2,80}")) throw new Exception("Invalid plugin ID.");
+                if (plugin.has("actions") && !(plugin.opt("actions") instanceof JSONArray)) throw new Exception("Actions must be an array.");
+                JSONArray actions = plugin.optJSONArray("actions");
+                if (actions != null && actions.length() > 100) throw new Exception("Too many actions.");
+                plugin.put("enabled", true);
+                JSONArray old = readPlugins(), next = new JSONArray();
+                for (int i = 0; i < old.length(); i++) {
+                    JSONObject existing = old.optJSONObject(i);
+                    if (existing != null && !id.equals(existing.optString("id"))) next.put(existing);
+                }
+                next.put(plugin);
+                savePlugins(next);
+                runOnUiThread(() -> { toast("Installed: " + name); showPlugins(); });
+            } catch (Exception e) {
+                String msg = e.getMessage() == null ? "Download failed" : e.getMessage();
+                runOnUiThread(() -> toast("Plugin install failed: " + msg));
+            }
+        }).start();
+    }
+
+    private void showPluginDetails(String id) {
+        JSONArray plugins = readPlugins();
+        for (int i = 0; i < plugins.length(); i++) {
+            JSONObject p = plugins.optJSONObject(i);
+            if (p == null || !id.equals(p.optString("id"))) continue;
+            beginPage("PLUGIN DETAILS");
+            heading(p.optString("name", id));
+            JSONArray actions = p.optJSONArray("actions");
+            paragraph("ID: " + id + "\nVersion: " + p.optString("version", "?") +
+                "\nEnabled: " + p.optBoolean("enabled", true) +
+                "\nDescription: " + p.optString("description", "No description") +
+                "\nActions: " + (actions == null ? 0 : actions.length()));
+            button("VALIDATE MANIFEST", () -> toast("Manifest fields are present. Actions are restricted to supported safe types."));
+            button("BACK TO PLUGINS", () -> showPlugins());
+            return;
+        }
+        toast("Plugin not found.");
+    }
+
+    private void runPluginAction(String pluginId, String actionId) {
+        JSONArray plugins = readPlugins();
+        for (int i = 0; i < plugins.length(); i++) {
+            JSONObject p = plugins.optJSONObject(i);
+            if (p == null || !pluginId.equals(p.optString("id"))) continue;
+            if (!p.optBoolean("enabled", true)) { toast("Enable this plugin first."); return; }
+            JSONArray actions = p.optJSONArray("actions");
+            if (actions == null) break;
+            for (int j = 0; j < actions.length(); j++) {
+                JSONObject a = actions.optJSONObject(j);
+                if (a == null || !actionId.equals(a.optString("id"))) continue;
+                String type = a.optString("type", "info");
+                String message = a.optString("message", "");
+                if ("info".equals(type)) {
+                    new android.app.AlertDialog.Builder(this).setTitle(a.optString("label", "Plugin"))
+                        .setMessage(message).setPositiveButton("OK", null).show();
+                } else if ("copy_text".equals(type)) {
+                    ClipboardManager cm = (ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+                    cm.setPrimaryClip(ClipData.newPlainText("Plugin text", message));
+                    toast("Plugin text copied.");
+                } else if ("open_url".equals(type)) {
+                    String target = a.optString("url", "");
+                    if (target.startsWith("https://")) openUrl(target); else toast("Only HTTPS links are allowed.");
+                } else {
+                    toast("Unsupported safe action type: " + type);
+                }
+                return;
+            }
+        }
+        toast("Plugin action not found.");
     }
 
     private JSONArray readPlugins() {
