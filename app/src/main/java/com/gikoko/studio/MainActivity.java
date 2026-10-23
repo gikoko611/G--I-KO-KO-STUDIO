@@ -354,9 +354,20 @@ public class MainActivity extends Activity {
         return null;
     }
 
+    private File getWebOutputDir() {
+        if (importedProjectDir == null) return null;
+        File dist = new File(importedProjectDir, "dist");
+        if (new File(dist, "index.html").isFile()) return dist;
+        File build = new File(importedProjectDir, "build");
+        if (new File(build, "index.html").isFile()) return build;
+        if (new File(importedProjectDir, "index.html").isFile()) return importedProjectDir;
+        return null;
+    }
+
     private void previewWebProject() {
         if (importedProjectDir == null) return;
-        File index = findFile(importedProjectDir, "index.html", 7);
+        File webRoot = getWebOutputDir();
+        File index = webRoot == null ? findFile(importedProjectDir, "index.html", 7) : new File(webRoot, "index.html");
         if (index == null) {
             toast("No index.html found. Framework projects need their build output first.");
             return;
@@ -386,8 +397,10 @@ public class MainActivity extends Activity {
     private void packageWebProject() {
         if (importedProjectDir == null) return;
         try {
+            File webRoot = getWebOutputDir();
+            if (webRoot == null) webRoot = importedProjectDir;
             File out = new File(getCacheDir(), "GI-Web-Build-" + System.currentTimeMillis() + ".zip");
-            zipDirectory(importedProjectDir, out);
+            zipDirectory(webRoot, out);
             Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
             save.addCategory(Intent.CATEGORY_OPENABLE);
             save.setType("application/zip");
