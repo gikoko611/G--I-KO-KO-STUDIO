@@ -186,6 +186,227 @@ public class MainActivity extends Activity {
         return e;
     }
 
+
+    private EditText aiChatInput;
+    private TextView aiChatLog;
+    private String aiChatHistory = "";
+
+    private android.content.SharedPreferences aiPrefs() {
+        return getSharedPreferences("studio_ai", MODE_PRIVATE);
+    }
+
+    private void showAiAssistant() {
+        beginPage("G.I AI ASSISTANT");
+        heading("G.I AI • CUSTOM PROVIDER");
+        paragraph("Connect an OpenAI-compatible API. API key is stored in this app's private preferences. Free-model discovery uses OpenRouter's public model catalogue and only shows models whose published input and output prices are both zero.");
+        button("AI PROVIDER SETTINGS", () -> showAiSettings());
+        button("REFRESH FREE MODEL LIST", () -> refreshFreeModels());
+        String provider = aiPrefs().getString("base_url", "https://openrouter.ai/api/v1");
+        String model = aiPrefs().getString("model", "");
+        paragraph("Provider: " + provider + "\nSelected model: " + (model.isEmpty() ? "(choose one in settings)" : model));
+        heading("CHAT");
+        aiChatLog = text(aiChatHistory.isEmpty() ? "G.I AI is ready. Configure a provider and model, then ask for coding help, project analysis, or guided actions." : aiChatHistory, 13, Color.WHITE, false);
+        aiChatLog.setGravity(Gravity.TOP);
+        aiChatLog.setPadding(dp(12), dp(12), dp(12), dp(12));
+        aiChatLog.setBackground(shape(panel, Color.rgb(0, 111, 105)));
+        page.addView(aiChatLog, new LinearLayout.LayoutParams(-1, dp(240)));
+        aiChatInput = new EditText(this);
+        aiChatInput.setHint("Ask G.I AI to help with your project…");
+        aiChatInput.setHintTextColor(Color.rgb(120,155,166));
+        aiChatInput.setTextColor(Color.WHITE);
+        aiChatInput.setGravity(Gravity.TOP);
+        aiChatInput.setMinLines(2);
+        aiChatInput.setPadding(dp(12), dp(10), dp(12), dp(10));
+        aiChatInput.setBackground(shape(panel, Color.rgb(0,111,105)));
+        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(-1, dp(92));
+        ip.topMargin = dp(10); ip.bottomMargin = dp(8);
+        page.addView(aiChatInput, ip);
+        button("SEND TO AI", () -> sendAiMessage());
+        button("CLEAR CHAT", () -> { aiChatHistory = ""; showAiAssistant(); });
+        button("SKILLS & PHONE CONNECTORS", () -> showAiSkills());
+        button("BACK TO WORKSPACE", () -> showHome());
+    }
+
+    private void showAiSettings() {
+        beginPage("AI PROVIDER SETTINGS");
+        heading("CUSTOM AI PROVIDER");
+        android.content.SharedPreferences p = aiPrefs();
+        EditText base = field("Base URL e.g. https://api.example.com/v1", false);
+        base.setText(p.getString("base_url", "https://openrouter.ai/api/v1"));
+        EditText key = field("API key (keep private)", true);
+        key.setText(p.getString("api_key", ""));
+        EditText model = field("Model ID (exact provider model id)", false);
+        model.setText(p.getString("model", ""));
+        paragraph("Compatible endpoints: POST {base URL}/chat/completions and GET {base URL}/models. Some providers use a different API format and may not work. Free status is only verified from OpenRouter's public pricing metadata; custom-provider models are not automatically assumed free.");
+        button("SAVE PROVIDER", () -> {
+            String u = base.getText().toString().trim();
+            if (!(u.startsWith("https://") || u.startsWith("http://10.0.2.2"))) {
+                toast("Use an HTTPS provider URL.");
+                return;
+            }
+            while (u.endsWith("/")) u = u.substring(0, u.length()-1);
+            aiPrefs().edit().putString("base_url", u)
+                .putString("api_key", key.getText().toString().trim())
+                .putString("model", model.getText().toString().trim()).apply();
+            toast("AI provider settings saved");
+            showAiAssistant();
+        });
+        button("LOAD FREE MODELS FROM OPENROUTER", () -> refreshFreeModels());
+        button("BACK TO AI CHAT", () -> showAiAssistant());
+    }
+
+    private void refreshFreeModels() {
+        beginPage("FREE MODEL CATALOG");
+        heading("VERIFIED ZERO-PRICE MODELS");
+        paragraph("Loading OpenRouter catalogue. Only entries reporting zero input AND output price are listed. Provider prices and quotas can change; free does not mean unlimited.");
+        TextView status = text("Connecting…", 12, Color.WHITE, false);
+        page.addView(status);
+        button("BACK TO AI CHAT", () -> showAiAssistant());
+        new Thread(() -> {
+            HttpURLConnection c = null;
+            try {
+                c = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/models").openConnection();
+                c.setRequestMethod("GET"); c.setConnectTimeout(15000); c.setReadTimeout(20000);
+                int code = c.getResponseCode();
+                if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
+                String body = readConnection(c);
+                JSONObject root = new JSONObject(body);
+                JSONArray data = root.optJSONArray("data");
+                List<String> models = new ArrayList<>();
+                if (data != null) for (int i=0; i<data.length(); i++) {
+                    JSONObject m = data.optJSONObject(i);
+                    if (m == null) continue;
+                    JSONObject pricing = m.optJSONObject("pricing");
+                    if (pricing == null) continue;
+                    if (isZeroPrice(pricing.optString("prompt", "unknown")) &&
+                        isZeroPrice(pricing.optString("completion", "unknown"))) {
+                        String id = m.optString("id", "");
+                        String name = m.optString("name", id);
+                        if (!id.isEmpty()) models.add(id + "\n" + name);
+                    }
+                }
+                java.util.Collections.sort(models, String.CASE_INSENSITIVE_ORDER);
+                runOnUiThread(() -> {
+                    beginPage("FREE MODEL CATALOG");
+                    heading("ZERO-PRICE MODELS (" + models.size() + ")");
+                    paragraph("Tap a model to select it. Price metadata comes from OpenRouter and can change.");
+                    if (models.isEmpty()) paragraph("No zero-price models were returned by the catalogue.");
+                    for (String item : models) {
+                        String id = item.substring(0, item.indexOf('\n'));
+                        button(item.replace("\n", "  •  "), () -> {
+                            aiPrefs().edit().putString("base_url", "https://openrouter.ai/api/v1")
+                                .putString("model", id).apply();
+                            toast("Selected " + id);
+                            showAiSettings();
+                        });
+                    }
+                    button("BACK TO AI CHAT", () -> showAiAssistant());
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> { status.setText("Could not load models: " + e.getMessage() + "\nCheck internet and try again."); });
+            } finally { if (c != null) c.disconnect(); }
+        }).start();
+    }
+
+    private boolean isZeroPrice(String value) {
+        try { return Double.parseDouble(value) == 0.0; }
+        catch (Exception e) { return false; }
+    }
+
+    private String readConnection(HttpURLConnection c) throws Exception {
+        InputStream in = c.getInputStream();
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[8192]; int n; int total = 0;
+        while ((n = in.read(buf)) > 0) {
+            total += n;
+            if (total > 4 * 1024 * 1024) throw new Exception("Response too large");
+            out.write(buf, 0, n);
+        }
+        in.close();
+        return new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private void sendAiMessage() {
+        if (aiChatInput == null || aiChatLog == null) return;
+        String question = aiChatInput.getText().toString().trim();
+        if (question.isEmpty()) { toast("Enter a message first"); return; }
+        String base = aiPrefs().getString("base_url", "").trim();
+        String key = aiPrefs().getString("api_key", "").trim();
+        String model = aiPrefs().getString("model", "").trim();
+        if (base.isEmpty() || model.isEmpty()) { toast("Set provider URL and model first"); showAiSettings(); return; }
+        String previous = aiChatHistory;
+        aiChatHistory += (aiChatHistory.isEmpty() ? "" : "\n\n") + "YOU: " + question + "\n\nG.I AI: Thinking…";
+        aiChatLog.setText(aiChatHistory);
+        aiChatInput.setText("");
+        new Thread(() -> {
+            HttpURLConnection c = null;
+            try {
+                String url = base + (base.endsWith("/v1") ? "/chat/completions" : "/v1/chat/completions");
+                c = (HttpURLConnection) new URL(url).openConnection();
+                c.setRequestMethod("POST"); c.setConnectTimeout(20000); c.setReadTimeout(60000);
+                c.setDoOutput(true); c.setRequestProperty("Content-Type", "application/json");
+                if (!key.isEmpty()) c.setRequestProperty("Authorization", "Bearer " + key);
+                JSONObject body = new JSONObject();
+                body.put("model", model);
+                JSONArray messages = new JSONArray();
+                messages.put(new JSONObject().put("role","system").put("content",
+                    "You are G.I AI inside G I KO KO STUDIO, a mobile-first Android development studio. Help with Android, Java, Kotlin, Termux, GitHub Actions, debugging, plugins and safe phone workflows. You cannot directly inspect or control the device. Only suggest actions the user explicitly approves; never claim a phone action was performed unless the app actually reports it."));
+                messages.put(new JSONObject().put("role","user").put("content", question));
+                body.put("messages", messages);
+                byte[] bytes = body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                OutputStream out = c.getOutputStream(); out.write(bytes); out.close();
+                int code = c.getResponseCode();
+                InputStream stream = code >= 200 && code < 300 ? c.getInputStream() : c.getErrorStream();
+                java.io.ByteArrayOutputStream response = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[4096]; int n; int total=0;
+                while ((n=stream.read(buf))>0) { total+=n; if(total>2*1024*1024) throw new Exception("Response too large"); response.write(buf,0,n); }
+                stream.close();
+                JSONObject json = new JSONObject(new String(response.toByteArray(), java.nio.charset.StandardCharsets.UTF_8));
+                if (code < 200 || code >= 300) throw new Exception("HTTP " + code + ": " + json.optString("error", json.toString()));
+                String answer = json.getJSONArray("choices").getJSONObject(0).getJSONObject("message").optString("content", "(empty response)");
+                runOnUiThread(() -> {
+                    int cut = aiChatHistory.lastIndexOf("G.I AI: Thinking…");
+                    if (cut >= 0) aiChatHistory = aiChatHistory.substring(0, cut) + "G.I AI: " + answer;
+                    else aiChatHistory += "\nG.I AI: " + answer;
+                    if (aiChatLog != null) aiChatLog.setText(aiChatHistory);
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    int cut = aiChatHistory.lastIndexOf("G.I AI: Thinking…");
+                    if (cut >= 0) aiChatHistory = aiChatHistory.substring(0, cut) + "G.I AI error: " + e.getMessage();
+                    if (aiChatLog != null) aiChatLog.setText(aiChatHistory);
+                });
+            } finally { if (c != null) c.disconnect(); }
+        }).start();
+    }
+
+    private void showAiSkills() {
+        beginPage("AI SKILLS & CONNECTORS");
+        heading("SAFE PHONE CONNECTORS");
+        paragraph("These connectors use Android intents and require the relevant app or user confirmation. Android does not allow an ordinary app to silently control all other apps; accessibility-based automation needs a separate user-enabled service and careful permissions.");
+        button("OPEN ANDROID SETTINGS", () -> {
+            try { startActivity(new Intent(android.provider.Settings.ACTION_SETTINGS)); }
+            catch (Exception e) { toast("Could not open Settings: " + e.getMessage()); }
+        });
+        button("OPEN WI-FI SETTINGS", () -> {
+            try { startActivity(new Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)); }
+            catch (Exception e) { toast("Could not open Wi-Fi settings"); }
+        });
+        button("OPEN APP SETTINGS FOR STUDIO", () -> {
+            try { Intent i = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS); i.setData(Uri.parse("package:" + getPackageName())); startActivity(i); }
+            catch (Exception e) { toast("Could not open app settings"); }
+        });
+        button("SHARE TEXT / LOG / CODE", () -> {
+            Intent i = new Intent(Intent.ACTION_SEND); i.setType("text/plain");
+            i.putExtra(Intent.EXTRA_TEXT, "G I KO KO STUDIO • Share your selected code or logs here.");
+            try { startActivity(Intent.createChooser(i, "Share from Studio")); } catch (Exception e) { toast("No share app available"); }
+        });
+        button("OPEN REPOSITORY", () -> openUrl("https://github.com/gikoko611/G--I-KO-KO-STUDIO"));
+        heading("SKILL IDEAS");
+        paragraph("Project Analyzer • Java/Kotlin error explainer • Gradle build assistant • GitHub Actions log reader • Plugin manifest generator • Safe file operations • APK signing guide • Web project preview helper. Skills should declare inputs, permissions and an explicit confirmation step before changing files or launching external actions.");
+        button("BACK TO AI CHAT", () -> showAiAssistant());
+    }
+
     private void showHome() {
         beginPage("MOBILE DEVELOPMENT ENVIRONMENT");
         LinearLayout hero = column();
@@ -210,6 +431,7 @@ public class MainActivity extends Activity {
         button("LOCAL BUILD CENTER  •  ZIP IMPORT", () -> showLocalBuildCenter());
         button("BUILD CENTER  •  APK OUTPUT", () -> showBuildCenter());
         button("APK SIGNER", () -> showSigner());
+        button("G.I AI ASSISTANT  •  CUSTOM PROVIDERS", () -> showAiAssistant());
         button("PLUGIN MANAGER", () -> showPlugins());
         button("DEVICE & BUILD DIAGNOSTICS", () -> showDiagnostics());
         button("SETTINGS & ABOUT", () -> showAbout());
