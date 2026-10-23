@@ -318,9 +318,6 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
                 runOnUiThread(() -> signerStatus.setText("Signing failed: " + message));
-            } finally {
-                storePass = "";
-                keyPass = "";
             }
         }).start();
     }
