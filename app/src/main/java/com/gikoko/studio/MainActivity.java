@@ -1282,15 +1282,18 @@ public class MainActivity extends Activity {
     private void showNativeBuildGuide() {
         beginPage("LOCAL NATIVE BUILD GUIDE");
         heading("ANDROID APK BUILD • TERMUX");
-        paragraph("The app cannot embed the full Android SDK/JDK safely inside its APK. It can hand off source to Termux, prepare commands and help you build. Redmi 9A is ARMv7 with limited RAM/storage; Android SDK platform availability and Gradle compatibility must be checked on-device.");
-        heading("STEP 1 • INSTALL AVAILABLE TERMUX TOOLS");
-        paragraph("Internet is needed for initial package setup and the first dependency download. Later builds can use Gradle offline mode if every required artifact has been cached.");
-        String setup = "pkg update && pkg upgrade -y\npkg install -y openjdk-17 gradle git unzip zip aapt apksigner";
-        button("COPY TOOLCHAIN SETUP COMMAND", () -> copyTermuxText("Termux setup", setup));
+        paragraph("This project uses a pinned Android toolchain: JDK 17, Android Gradle Plugin 8.7.3, Gradle 8.9, compileSdk 35 and Android Build Tools 35.0.0. The app does not bundle these large components. On ARMv7 Termux, a complete SDK install may be unsupported or unreliable; use GitHub Actions for a dependable build if local SDK packages are unavailable.");
+        heading("STEP 1 • INSTALL TERMUX BUILD TOOLS");
+        paragraph("Install the Java/Gradle utilities first. This alone is NOT a complete Android SDK. Native APK compilation also requires platforms/android-35, build-tools/35.0.0 and downloadable Gradle/Maven dependencies.");
+        String setup = "pkg update && pkg upgrade -y\npkg install -y openjdk-17 gradle git unzip zip aapt apksigner\njava -version\ngradle --version";
+        button("COPY TERMUX TOOL SETUP", () -> copyTermuxText("Termux setup", setup));
         button("OPEN TERMUX", () -> launchTermux());
-        heading("STEP 2 • EXPORT PROJECT");
-        paragraph("Export the Android project ZIP from this app, then make it accessible in Termux Download storage. Update the ZIP filename in the command if needed.");
-        String command = "termux-setup-storage\nmkdir -p ~/GI-STUDIO-BUILDS && cd ~/GI-STUDIO-BUILDS\nunzip -o ~/storage/downloads/GI-Android-Project-Source.zip -d project\ncd project\n# First build with internet to cache dependencies:\nif [ -f ./gradlew ]; then chmod +x ./gradlew && ./gradlew assembleDebug; else gradle assembleDebug; fi\n# Subsequent offline build after dependencies are cached:\nif [ -f ./gradlew ]; then ./gradlew --offline assembleDebug; else gradle --offline assembleDebug; fi\nfind . -path '*/build/outputs/apk/*/*.apk' -type f -print";
+        heading("STEP 2 • VERIFY SDK COMPONENTS");
+        String sdkCheck = "echo \"ANDROID_HOME=$ANDROID_HOME\"\nls \"$ANDROID_HOME/platforms/android-35\"\nls \"$ANDROID_HOME/build-tools/35.0.0\"\n# If either path is missing, this device is not ready for native Android builds.";
+        button("COPY SDK CHECK COMMANDS", () -> copyTermuxText("SDK component checks", sdkCheck));
+        heading("STEP 3 • EXPORT AND BUILD");
+        paragraph("Export the Android source ZIP to Downloads. Extract it, then use the included scripts/termux-native-build.sh helper. It checks Java 17, Gradle 8.9, SDK platform 35 and Build Tools 35.0.0 before starting the build.");
+        String command = "termux-setup-storage\nmkdir -p ~/GI-STUDIO-BUILDS && cd ~/GI-STUDIO-BUILDS\nunzip -o ~/storage/downloads/GI-Android-Project-Source.zip -d project\ncd project\nbash scripts/termux-native-build.sh\n# Once every dependency has been downloaded and cached:\ngradle --offline --no-daemon assembleDebug\nfind . -path '*/build/outputs/apk/*/*.apk' -type f -print";
         button("COPY BUILD COMMANDS", () -> copyTermuxText("Termux build commands", command));
         button("EXPORT SOURCE ZIP", () -> exportNativeProject());
         button("BACK TO BUILD CENTER", () -> showLocalBuildCenter());
