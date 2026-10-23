@@ -635,9 +635,25 @@ public class MainActivity extends Activity {
             try { startActivity(Intent.createChooser(i, "Share from Studio")); } catch (Exception e) { toast("No share app available"); }
         });
         button("OPEN REPOSITORY", () -> openUrl("https://github.com/gikoko611/G--I-KO-KO-STUDIO"));
-        heading("SKILL IDEAS");
-        paragraph("Project Analyzer • Java/Kotlin error explainer • Gradle build assistant • GitHub Actions log reader • Plugin manifest generator • Safe file operations • APK signing guide • Web project preview helper. Skills should declare inputs, permissions and an explicit confirmation step before changing files or launching external actions.");
+        heading("PRO SKILL LAUNCHER");
+        paragraph("Choose a focused workflow. Skills prepare a prompt for the connected model; the AI response is advice or a proposal, not a claim that a build or file operation has happened.");
+        button("ANALYZE CURRENT FILE", () -> launchAiSkill("Analyze the currently selected file context. Explain its purpose, architecture, likely bugs, security risks, and concrete prioritized improvements. Do not rewrite it unless I ask."));
+        button("FIX CODE / DEBUG ERROR", () -> launchAiSkill("Act as a senior Android/Java debugging agent. Ask for missing error logs only if necessary. Identify root cause, propose a minimal safe fix, and provide verification steps. If editing the selected file, return the complete file inside the required GI file edit markers."));
+        button("ANDROID / GRADLE BUILD ASSISTANT", () -> launchAiSkill("Help diagnose an Android Gradle build. Review the provided context and logs, identify the first meaningful failure, explain the root cause, and propose exact fixes plus commands to verify. Never claim a build succeeded without output."));
+        button("GITHUB ACTIONS LOG ANALYZER", () -> launchAiSkill("Analyze the GitHub Actions logs or error text I provide. Find the earliest causal error, distinguish it from follow-on errors, and give a precise patch and verification checklist."));
+        button("GENERATE SAFE PLUGIN MANIFEST", () -> launchAiSkill("Help design a declarative plugin manifest for this app. Include plugin name, version, description, declared inputs, permissions, and confirmation requirements. Do not propose executing arbitrary downloaded code."));
+        button("PLAN A SAFE FILE CHANGE", () -> launchAiSkill("Review the selected file and propose the smallest safe change that meets my goal. Explain impact and risks. If I ask you to edit it, return the complete replacement file between the GI file edit markers. Never say it was saved."));
+        button("APK SIGNING / RELEASE CHECKLIST", () -> launchAiSkill("Give me a step-by-step Android APK release checklist covering package ID, versioning, signing key safety, build variant, artifact verification, and installation compatibility. Do not ask me to paste private signing keys."));
         button("BACK TO AI CHAT", () -> showAiAssistant());
+    }
+
+    private void launchAiSkill(String prompt) {
+        showAiAssistant();
+        if (aiChatInput != null) {
+            aiChatInput.setText(prompt);
+            aiChatInput.setSelection(aiChatInput.getText().length());
+            aiChatInput.requestFocus();
+        }
     }
 
     private void showHome() {
