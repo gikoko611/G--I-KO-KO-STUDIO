@@ -222,12 +222,11 @@ public class MainActivity extends Activity {
         beginPage("PROJECT EXPLORER");
         heading("Project Explorer");
         paragraph("Choose a project archive or source file from your phone. This first iteration uses Android's secure file picker and does not scan your storage automatically.");
-        button("PICK PROJECT ZIP", () -> {
-            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            i.setType("application/zip");
-            i.addCategory(Intent.CATEGORY_OPENABLE);
-            startActivityForResult(i, 201);
-        });
+        button("PICK PROJECT ZIP", () -> pickProjectZip());
+        if (importedProjectDir != null && importedProjectDir.exists()) {
+            paragraph("Imported: " + importedProjectDir.getName() + "\nDetected type: " + importedProjectType);
+            button("OPEN LOCAL BUILD CENTER", () -> showLocalBuildCenter());
+        }
         button("BACK TO WORKSPACE", () -> showHome());
     }
 
@@ -773,9 +772,6 @@ public class MainActivity extends Activity {
             } catch (Exception e) { toast("Export failed: " + e.getMessage()); }
         } else if (requestCode == PICK_PLUGIN) {
             importPlugin(uri);
-        } else if (requestCode == 201) {
-            toast("Project selected: " + uri.getLastPathSegment() +
-                ". Arbitrary project cloud-build upload is not connected yet.");
         }
     }
 }
