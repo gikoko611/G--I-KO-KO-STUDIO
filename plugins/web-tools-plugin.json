@@ -1,0 +1,20 @@
+{
+  "id": "studio.web-tools",
+  "name": "Web Tools Plugin",
+  "version": "1.0.0",
+  "description": "Safe actions for web development workflow.",
+  "actions": [
+    {
+      "id": "web-guide",
+      "label": "Show web workflow guide",
+      "type": "info",
+      "message": "Import a web project ZIP, preview an existing index.html, then package the prepared output folder."
+    },
+    {
+      "id": "copy-note",
+      "label": "Copy web project checklist",
+      "type": "copy_text",
+      "message": "G.I KO KO STUDIO web checklist: prepare build output, verify index.html and assets, then export ZIP."
+    }
+  ]
+}
