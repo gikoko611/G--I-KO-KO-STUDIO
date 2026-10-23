@@ -1,0 +1,14 @@
+{
+  "id": "studio.example",
+  "name": "Example Studio Plugin",
+  "version": "1.0.0",
+  "description": "Example declarative plugin manifest for testing the Plugin Manager.",
+  "actions": [
+    {
+      "id": "about",
+      "label": "Show plugin information",
+      "type": "info",
+      "message": "This is a sample manifest. Arbitrary code execution is not supported."
+    }
+  ]
+}
