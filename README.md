@@ -20,12 +20,20 @@ Android-native mobile development workspace with a modern cyber-green interface.
 4. For a static web app, use **PREVIEW WEB APP OFFLINE** or **PACKAGE WEB PROJECT ZIP**.
 5. For an Android source project, export the ZIP and use Termux with a compatible JDK, Android SDK and Gradle installation.
 
-## Important build limitations
-This app does **not** bundle the Android SDK, Gradle, JDK, Node.js or all Maven/NPM dependencies. Therefore it cannot independently promise a one-tap, fully offline APK build for arbitrary native projects. Native Android builds need compatible tools and dependencies installed/cached on the device first; on a 32-bit Redmi 9A this is constrained by ARMv7 support, memory and storage. The Termux guide uses `gradle --offline assembleDebug`, which only works after the required Gradle plugins and dependencies are cached.
+## Online and offline modes
 
-The current web workflow is an offline preview and source-ZIP packaging workflow, not a compiler for every React/Vite/Angular framework. Framework web projects need their generated static output (such as `dist/index.html`) included in the ZIP for preview/package.
+The app exposes two build modes:
 
-GitHub Actions is no longer triggered automatically on push. The workflow remains available only for a manual run if needed.
+- **Online mode:** opens the GitHub Actions cloud workflow and repository build logs. The current workflow builds this Studio repository and uploads a debug APK artifact. It does not yet upload arbitrary imported project ZIPs to a cloud build job.
+- **Offline mode:** imports project ZIPs into app-private storage. Static HTML web projects can be previewed offline and packaged into a source ZIP. Android source projects can be edited/exported locally and handed off to Termux for a native build.
+
+## Important native-build limitation
+
+This app does **not** bundle the Android SDK, Gradle, JDK, Node.js or all Maven/NPM dependencies. Therefore it cannot independently promise a one-tap, fully offline APK build for arbitrary native projects. Native Android builds need a compatible toolchain and all required dependencies already installed/cached on the device. On a 32-bit Redmi 9A this is constrained by ARMv7 support, memory and storage. The Termux guide uses `gradle --offline assembleDebug`; this only works after the required Gradle plugins, Android platform/build-tools and dependencies have been cached.
+
+The offline web workflow is a preview and source-ZIP packaging workflow, not a compiler for every React/Vite/Angular framework. Framework web projects need generated static output (such as `dist/index.html`) included in the ZIP for preview/package.
+
+The GitHub Actions workflow runs on pushes to `main` and can also be started manually from the Actions page.
 
 ## Security
 - Imported ZIPs are extracted into private app storage; unsafe paths and overlarge extraction are rejected.
