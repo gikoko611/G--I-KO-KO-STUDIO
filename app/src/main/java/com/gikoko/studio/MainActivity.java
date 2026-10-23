@@ -299,7 +299,13 @@ public class MainActivity extends Activity {
     }
 
     private void createProjectTextFile() {
-        EditText name = field("New file path (example: notes.txt)", false);
+        EditText name = new EditText(this);
+        name.setSingleLine(true);
+        name.setHint("New file path (example: notes.txt)");
+        name.setTextColor(Color.WHITE);
+        name.setHintTextColor(Color.GRAY);
+        name.setPadding(dp(12), dp(8), dp(12), dp(8));
+        name.setBackground(shape(panel, Color.rgb(0, 111, 105)));
         new android.app.AlertDialog.Builder(this)
             .setTitle("Create project file")
             .setMessage("Use a relative path inside the imported project. Existing files will not be overwritten.")
