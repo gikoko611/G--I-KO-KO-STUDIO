@@ -242,10 +242,131 @@ public class MainActivity extends Activity {
 
     private void showEditorInfo() {
         beginPage("CODE WORKSPACE");
-        heading("Code Editor");
-        paragraph("Editor foundation is planned for Java, Kotlin, XML, JSON and Gradle with syntax highlighting, tabs, find/replace and project file operations. This screen is a roadmap, not yet a full code editor.");
-        button("OPEN PROJECT EXPLORER", () -> showProjectExplorer());
+        heading("Project Code Editor");
+        paragraph("Edit text-based project files directly in the app-private workspace. Changes are saved to the imported project folder. This lightweight editor does not compile code or provide full IDE syntax analysis.");
+        if (importedProjectDir == null || !importedProjectDir.exists()) {
+            paragraph("Import a project ZIP first to browse and edit its files.");
+            button("IMPORT PROJECT ZIP", () -> pickProjectZip());
+            button("OPEN PROJECT EXPLORER", () -> showProjectExplorer());
+            button("BACK TO WORKSPACE", () -> showHome());
+            return;
+        }
+        paragraph("PROJECT: " + importedProjectDir.getName() + "\\nROOT: " + importedProjectDir.getAbsolutePath());
+        button("REFRESH FILE LIST", () -> showEditorInfo());
+        button("CREATE NEW TEXT FILE", () -> createProjectTextFile());
+        LinearLayout files = column();
+        page.addView(files);
+        List<File> found = new ArrayList<>();
+        collectEditableFiles(importedProjectDir, found, 0);
+        if (found.isEmpty()) {
+            paragraph("No editable text files found in this project.");
+        } else {
+            paragraph("Editable files (" + found.size() + ", maximum 150):");
+            for (File f : found) {
+                String rel = importedProjectDir.toURI().relativize(f.toURI()).getPath();
+                Button open = button("EDIT • " + rel, () -> editProjectFile(f));
+                open.setTextSize(11);
+            }
+        }
         button("BACK TO WORKSPACE", () -> showHome());
+    }
+
+    private void collectEditableFiles(File dir, List<File> out, int depth) {
+        if (dir == null || !dir.isDirectory() || depth > 12 || out.size() >= 150) return;
+        File[] children = dir.listFiles();
+        if (children == null) return;
+        java.util.Arrays.sort(children, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+        for (File child : children) {
+            if (out.size() >= 150) return;
+            if (child.isDirectory()) {
+                String n = child.getName();
+                if (n.equals(".git") || n.equals("node_modules") || n.equals(".gradle") || n.equals("build")) continue;
+                collectEditableFiles(child, out, depth + 1);
+            } else if (child.isFile() && child.length() <= 1024 * 1024 && isEditableTextFile(child.getName())) {
+                out.add(child);
+            }
+        }
+    }
+
+    private boolean isEditableTextFile(String name) {
+        String n = name.toLowerCase(java.util.Locale.ROOT);
+        String[] exts = {".java", ".kt", ".xml", ".json", ".gradle", ".kts", ".properties",
+            ".txt", ".md", ".html", ".htm", ".css", ".js", ".ts", ".jsx", ".tsx",
+            ".py", ".sh", ".yml", ".yaml", ".toml", ".pro", ".sql", ".csv", ".env.example"};
+        if (n.equals("dockerfile") || n.equals("makefile") || n.equals("readme")) return true;
+        for (String ext : exts) if (n.endsWith(ext)) return true;
+        return false;
+    }
+
+    private void createProjectTextFile() {
+        EditText name = field("New file path (example: notes.txt)", false);
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Create project file")
+            .setMessage("Use a relative path inside the imported project. Existing files will not be overwritten.")
+            .setView(name)
+            .setNegativeButton("CANCEL", null)
+            .setPositiveButton("CREATE", (dialog, which) -> {
+                try {
+                    String rel = name.getText().toString().trim();
+                    if (rel.isEmpty() || rel.startsWith("/") || rel.contains("..") || rel.contains("\\\\")) {
+                        throw new Exception("Use a safe relative path without '..'.");
+                    }
+                    File target = new File(importedProjectDir, rel);
+                    String root = importedProjectDir.getCanonicalPath() + File.separator;
+                    if (!target.getCanonicalPath().startsWith(root)) throw new Exception("Unsafe file path.");
+                    if (target.exists()) throw new Exception("File already exists.");
+                    if (!isEditableTextFile(target.getName())) throw new Exception("Unsupported text file extension.");
+                    File parent = target.getParentFile();
+                    if (parent != null && !parent.exists() && !parent.mkdirs()) throw new Exception("Could not create folder.");
+                    if (!target.createNewFile()) throw new Exception("Could not create file.");
+                    editProjectFile(target);
+                } catch (Exception e) {
+                    toast("Create failed: " + e.getMessage());
+                }
+            }).show();
+    }
+
+    private void editProjectFile(File file) {
+        try {
+            if (file == null || !file.isFile() || file.length() > 1024 * 1024 || !isEditableTextFile(file.getName())) {
+                throw new Exception("File is missing, too large (limit 1 MB), or not a supported text file.");
+            }
+            byte[] bytes;
+            try (InputStream in = new FileInputStream(file)) { bytes = readAll(in); }
+            String content = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            beginPage("CODE EDITOR");
+            String rel = importedProjectDir.toURI().relativize(file.toURI()).getPath();
+            heading(rel);
+            paragraph("UTF-8 text editor • maximum file size 1 MB • save writes to the imported project copy.");
+            EditText editor = new EditText(this);
+            editor.setText(content);
+            editor.setTextSize(12);
+            editor.setTextColor(Color.WHITE);
+            editor.setHintTextColor(Color.GRAY);
+            editor.setGravity(Gravity.TOP | Gravity.START);
+            editor.setTypeface(Typeface.MONOSPACE);
+            editor.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE |
+                InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+            editor.setSingleLine(false);
+            editor.setMinLines(14);
+            editor.setPadding(dp(12), dp(12), dp(12), dp(12));
+            editor.setBackground(shape(panel, Color.rgb(0, 111, 105)));
+            page.addView(editor, new LinearLayout.LayoutParams(-1, dp(380)));
+            button("SAVE FILE", () -> {
+                try {
+                    String value = editor.getText().toString();
+                    if (value.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024 * 1024)
+                        throw new Exception("File exceeds the 1 MB limit.");
+                    try (OutputStream out = new FileOutputStream(file, false)) {
+                        out.write(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                    toast("Saved: " + rel);
+                } catch (Exception e) { toast("Save failed: " + e.getMessage()); }
+            });
+            button("BACK TO FILE LIST", () -> showEditorInfo());
+        } catch (Exception e) {
+            toast("Could not open file: " + e.getMessage());
+        }
     }
 
 
