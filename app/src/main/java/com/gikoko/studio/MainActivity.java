@@ -350,7 +350,7 @@ public class MainActivity extends Activity {
         heading("G.I AI • CUSTOM PROVIDER");
         paragraph("Connect an OpenAI-compatible API. API key is stored in this app's private preferences. Free-model discovery uses OpenRouter's public model catalogue and only shows models whose published input and output prices are both zero.");
         button("AI PROVIDER SETTINGS", () -> showAiSettings());
-        button("REFRESH FREE MODEL LIST", () -> refreshFreeModels());
+        button("CHOOSE / REFRESH MODELS", () -> loadProviderModels());
         String provider = aiPrefs().getString("base_url", "https://openrouter.ai/api/v1");
         String model = aiPrefs().getString("model", "");
         paragraph("Provider: " + provider + "\nSelected model: " + (model.isEmpty() ? "(choose one in settings)" : model));
@@ -386,10 +386,8 @@ public class MainActivity extends Activity {
         base.setText(p.getString("base_url", "https://openrouter.ai/api/v1"));
         EditText key = field("API key (keep private)", true);
         key.setText(p.getString("api_key", ""));
-        EditText model = field("Model ID (exact provider model id)", false);
-        model.setText(p.getString("model", ""));
-        paragraph("Compatible endpoints: POST {base URL}/chat/completions and GET {base URL}/models. Some providers use a different API format and may not work. Free status is only verified from OpenRouter's public pricing metadata; custom-provider models are not automatically assumed free.");
-        button("SAVE PROVIDER", () -> {
+        paragraph("Step 1: enter Base URL and API key. Step 2: save and load the provider's model choices. No manual Model ID entry is needed. OpenRouter results are filtered to models with zero input AND output price; for other custom endpoints, the app can only list the models the provider exposes and cannot independently guarantee they are free.");
+        button("SAVE & LOAD MODEL CHOICES", () -> {
             String u = base.getText().toString().trim();
             if (!(u.startsWith("https://") || u.startsWith("http://10.0.2.2"))) {
                 toast("Use an HTTPS provider URL.");
@@ -397,65 +395,92 @@ public class MainActivity extends Activity {
             }
             while (u.endsWith("/")) u = u.substring(0, u.length()-1);
             aiPrefs().edit().putString("base_url", u)
-                .putString("api_key", key.getText().toString().trim())
-                .putString("model", model.getText().toString().trim()).apply();
-            toast("AI provider settings saved");
-            showAiAssistant();
+                .putString("api_key", key.getText().toString().trim()).apply();
+            loadProviderModels();
         });
-        button("LOAD FREE MODELS FROM OPENROUTER", () -> refreshFreeModels());
+        button("LOAD MODEL CHOICES", () -> {
+            String u = base.getText().toString().trim();
+            if (u.isEmpty()) { toast("Enter Base URL first"); return; }
+            while (u.endsWith("/")) u = u.substring(0, u.length()-1);
+            aiPrefs().edit().putString("base_url", u)
+                .putString("api_key", key.getText().toString().trim()).apply();
+            loadProviderModels();
+        });
         button("BACK TO AI CHAT", () -> showAiAssistant());
     }
 
-    private void refreshFreeModels() {
-        beginPage("FREE MODEL CATALOG");
-        heading("VERIFIED ZERO-PRICE MODELS");
-        paragraph("Loading OpenRouter catalogue. Only entries reporting zero input AND output price are listed. Provider prices and quotas can change; free does not mean unlimited.");
-        TextView status = text("Connecting…", 12, Color.WHITE, false);
+    private void loadProviderModels() {
+        final String base = aiPrefs().getString("base_url", "").trim().replaceAll("/+$", "");
+        final String apiKey = aiPrefs().getString("api_key", "").trim();
+        if (base.isEmpty()) { toast("Enter and save Base URL first"); showAiSettings(); return; }
+        beginPage("CHOOSE AI MODEL");
+        heading("MODEL PICKER");
+        paragraph("Fetching available model choices from your configured provider. OpenRouter is filtered to verified zero-price models. Other providers must publish their model list; free status may not be exposed by their API.");
+        TextView status = text("Connecting to provider…", 12, Color.WHITE, false);
         page.addView(status);
-        button("BACK TO AI CHAT", () -> showAiAssistant());
+        button("BACK TO PROVIDER SETTINGS", () -> showAiSettings());
         new Thread(() -> {
-            HttpURLConnection c = null;
+            HttpURLConnection conn = null;
             try {
-                c = (HttpURLConnection) new URL("https://openrouter.ai/api/v1/models").openConnection();
-                c.setRequestMethod("GET"); c.setConnectTimeout(15000); c.setReadTimeout(20000);
-                int code = c.getResponseCode();
-                if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
-                String body = readConnection(c);
-                JSONObject root = new JSONObject(body);
+                boolean isOpenRouter = base.toLowerCase(java.util.Locale.ROOT).contains("openrouter.ai");
+                String endpoint = base + (base.endsWith("/models") ? "" : "/models");
+                conn = (HttpURLConnection) new URL(endpoint).openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(20000);
+                conn.setRequestProperty("Accept", "application/json");
+                if (!apiKey.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + apiKey);
+                int code = conn.getResponseCode();
+                if (code < 200 || code >= 300) throw new Exception("HTTP " + code + " from model-list endpoint");
+                JSONObject root = new JSONObject(readConnection(conn));
                 JSONArray data = root.optJSONArray("data");
+                if (data == null) data = root.optJSONArray("models");
                 List<String> models = new ArrayList<>();
-                if (data != null) for (int i=0; i<data.length(); i++) {
+                if (data != null) for (int i = 0; i < data.length(); i++) {
                     JSONObject m = data.optJSONObject(i);
                     if (m == null) continue;
+                    String id = m.optString("id", m.optString("slug", ""));
+                    if (id.trim().isEmpty()) continue;
                     JSONObject pricing = m.optJSONObject("pricing");
-                    if (pricing == null) continue;
-                    if (isZeroPrice(pricing.optString("prompt", "unknown")) &&
-                        isZeroPrice(pricing.optString("completion", "unknown"))) {
-                        String id = m.optString("id", "");
-                        String name = m.optString("name", id);
-                        if (!id.isEmpty()) models.add(id + "\n" + name);
+                    if (isOpenRouter) {
+                        if (pricing == null ||
+                            !isZeroPrice(pricing.optString("prompt", "unknown")) ||
+                            !isZeroPrice(pricing.optString("completion", "unknown"))) continue;
                     }
+                    String name = m.optString("name", m.optString("display_name", id));
+                    models.add(id + "\n" + name);
                 }
                 java.util.Collections.sort(models, String.CASE_INSENSITIVE_ORDER);
+                final boolean freeVerified = isOpenRouter;
                 runOnUiThread(() -> {
-                    beginPage("FREE MODEL CATALOG");
-                    heading("ZERO-PRICE MODELS (" + models.size() + ")");
-                    paragraph("Tap a model to select it. Price metadata comes from OpenRouter and can change.");
-                    if (models.isEmpty()) paragraph("No zero-price models were returned by the catalogue.");
+                    beginPage("CHOOSE AI MODEL");
+                    heading((freeVerified ? "VERIFIED ZERO-PRICE MODELS (" : "PROVIDER MODELS (") + models.size() + ")");
+                    paragraph(freeVerified
+                        ? "Tap a model to select it. OpenRouter pricing currently reports zero input and output cost; quotas and availability can change."
+                        : "Tap a model to select it. This provider returned these IDs, but its API does not reliably certify that every model is free.");
+                    if (models.isEmpty()) paragraph("No models found. Check the Base URL, API key, network, and whether this provider supports GET /models.");
                     for (String item : models) {
-                        String id = item.substring(0, item.indexOf('\n'));
-                        button(item.replace("\n", "  •  "), () -> {
-                            aiPrefs().edit().putString("base_url", "https://openrouter.ai/api/v1")
-                                .putString("model", id).apply();
-                            toast("Selected " + id);
-                            showAiSettings();
+                        int split = item.indexOf('\n');
+                        String id = split >= 0 ? item.substring(0, split) : item;
+                        String name = split >= 0 ? item.substring(split + 1) : item;
+                        button(name + "  •  " + id, () -> {
+                            aiPrefs().edit().putString("model", id).apply();
+                            toast("Selected model: " + id);
+                            showAiAssistant();
                         });
                     }
-                    button("BACK TO AI CHAT", () -> showAiAssistant());
+                    button("BACK TO PROVIDER SETTINGS", () -> showAiSettings());
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> { status.setText("Could not load models: " + e.getMessage() + "\nCheck internet and try again."); });
-            } finally { if (c != null) c.disconnect(); }
+                String msg = e.getMessage() == null ? "Unknown error" : e.getMessage();
+                runOnUiThread(() -> {
+                    beginPage("MODEL LIST ERROR");
+                    heading("COULD NOT LOAD MODELS");
+                    paragraph(msg + "\n\nMake sure Base URL includes the correct API prefix (often /v1), and the provider supports an authenticated GET /models endpoint.");
+                    button("EDIT PROVIDER SETTINGS", () -> showAiSettings());
+                    button("RETRY", () -> loadProviderModels());
+                });
+            } finally { if (conn != null) conn.disconnect(); }
         }).start();
     }
 
@@ -484,7 +509,7 @@ public class MainActivity extends Activity {
         String base = aiPrefs().getString("base_url", "").trim();
         String key = aiPrefs().getString("api_key", "").trim();
         String model = aiPrefs().getString("model", "").trim();
-        if (base.isEmpty() || model.isEmpty()) { toast("Set provider URL and model first"); showAiSettings(); return; }
+        if (base.isEmpty() || model.isEmpty()) { toast("Set Base URL/API key and choose a model from the list first"); showAiSettings(); return; }
         String previous = aiChatHistory;
         aiChatHistory += (aiChatHistory.isEmpty() ? "" : "\n\n") + "YOU: " + question + "\n\nG.I AI: Thinking…";
         aiChatLog.setText(aiChatHistory);
