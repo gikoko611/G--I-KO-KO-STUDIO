@@ -193,6 +193,7 @@ public class MainActivity extends Activity {
 
     private EditText aiChatInput;
     private TextView aiChatLog;
+    private ScrollView aiChatScroll;
     private String aiChatHistory = "";
 
     private android.content.SharedPreferences aiPrefs() {
@@ -356,11 +357,21 @@ public class MainActivity extends Activity {
         String model = aiPrefs().getString("model", "");
         paragraph("Provider: " + provider + "\nSelected model: " + (model.isEmpty() ? "(choose one in settings)" : model));
         heading("CHAT");
+        aiChatScroll = new ScrollView(this);
+        aiChatScroll.setFillViewport(false);
+        aiChatScroll.setSmoothScrollingEnabled(true);
+        aiChatScroll.setVerticalScrollBarEnabled(true);
+        aiChatScroll.setBackground(shape(panel, Color.rgb(0, 111, 105)));
         aiChatLog = text(aiChatHistory.isEmpty() ? "G.I AI is ready. Configure a provider and model, then ask for coding help, project analysis, or guided actions." : aiChatHistory, 13, Color.WHITE, false);
-        aiChatLog.setGravity(Gravity.TOP);
-        aiChatLog.setPadding(dp(12), dp(12), dp(12), dp(12));
-        aiChatLog.setBackground(shape(panel, Color.rgb(0, 111, 105)));
-        page.addView(aiChatLog, new LinearLayout.LayoutParams(-1, dp(240)));
+        aiChatLog.setGravity(Gravity.TOP | Gravity.START);
+        aiChatLog.setTextIsSelectable(true);
+        aiChatLog.setPadding(dp(12), dp(12), dp(12), dp(16));
+        aiChatLog.setBackgroundColor(Color.TRANSPARENT);
+        aiChatLog.setLineSpacing(dp(3), 1.0f);
+        aiChatScroll.addView(aiChatLog, new ScrollView.LayoutParams(-1, -2));
+        LinearLayout.LayoutParams chatScrollParams = new LinearLayout.LayoutParams(-1, dp(300));
+        page.addView(aiChatScroll, chatScrollParams);
+        aiChatScroll.post(() -> aiChatScroll.fullScroll(View.FOCUS_DOWN));
         aiChatInput = new EditText(this);
         aiChatInput.setHint("Ask G.I AI to help with your project…");
         aiChatInput.setHintTextColor(Color.rgb(120,155,166));
@@ -504,6 +515,16 @@ public class MainActivity extends Activity {
         return new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
     }
 
+    private void updateAiChatLog() {
+        if (aiChatLog == null) return;
+        aiChatLog.setText(aiChatHistory);
+        if (aiChatScroll != null) {
+            aiChatScroll.post(() -> {
+                if (aiChatScroll != null) aiChatScroll.fullScroll(View.FOCUS_DOWN);
+            });
+        }
+    }
+
     private void sendAiMessage() {
         if (aiChatInput == null || aiChatLog == null) return;
         String question = aiChatInput.getText().toString().trim();
@@ -514,7 +535,7 @@ public class MainActivity extends Activity {
         if (base.isEmpty() || model.isEmpty()) { toast("Set Base URL/API key and choose a model from the list first"); showAiSettings(); return; }
         String previous = aiChatHistory;
         aiChatHistory += (aiChatHistory.isEmpty() ? "" : "\n\n") + "YOU: " + question + "\n\nG.I AI: Thinking…";
-        aiChatLog.setText(aiChatHistory);
+        updateAiChatLog();
         aiChatInput.setText("");
         new Thread(() -> {
             HttpURLConnection c = null;
