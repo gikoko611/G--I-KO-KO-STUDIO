@@ -1,8 +1,6 @@
 name: Build G I KO KO STUDIO APK
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
