@@ -6,27 +6,28 @@ Android-native mobile development workspace with a modern cyber-green interface.
 - Version: **0.0.1**
 - Application ID: `com.gikoko.studio`
 - Minimum Android: 6.0 (API 23)
-- Build: GitHub Actions / Android SDK / Gradle
-- APK signing: local signing via Android's document picker and a user-provided JKS/PKCS12 keystore
-- Plugin manager: imports JSON manifests and supports enable/disable/remove
-- Sample manifest: `plugins/example-plugin.json`
+- Target device: Redmi 9A / Android 10 / ARMv7
+- Local workspace: ZIP import and safe extraction into app-private storage
+- Web projects: offline preview for projects containing `index.html`, and export a packaged source ZIP
+- Android projects: source ZIP import/export and Termux local-build guide
+- APK signing: local signing with a user-provided JKS/PKCS12 keystore
+- Plugin manager: JSON manifest import, listing, enable/disable and remove
 
-## Build APK
-Push to `main` or manually run **Build G I KO KO STUDIO APK** in GitHub Actions. Download the artifact named `G-I-KO-KO-STUDIO-0.0.1`.
+## Local ZIP workflow
+1. Open **LOCAL BUILD CENTER • ZIP IMPORT**.
+2. Select a project ZIP using Android's file picker.
+3. The app extracts it locally, rejects path-traversal ZIP entries, limits extraction to 200 MB, and attempts to detect web vs Android source projects.
+4. For a static web app, use **PREVIEW WEB APP OFFLINE** or **PACKAGE WEB PROJECT ZIP**.
+5. For an Android source project, export the ZIP and use Termux with a compatible JDK, Android SDK and Gradle installation.
 
-## Current implemented modules
-- Cyber-themed workspace navigation
-- Local APK signer with V1/V2/V3 signatures (user-provided signing key)
-- Declarative JSON plugin manifest import, listing, enable/disable and remove
-- GitHub Actions build-status links
-- Project ZIP picker foundation
+## Important build limitations
+This app does **not** bundle the Android SDK, Gradle, JDK, Node.js or all Maven/NPM dependencies. Therefore it cannot independently promise a one-tap, fully offline APK build for arbitrary native projects. Native Android builds need compatible tools and dependencies installed/cached on the device first; on a 32-bit Redmi 9A this is constrained by ARMv7 support, memory and storage. The Termux guide uses `gradle --offline assembleDebug`, which only works after the required Gradle plugins and dependencies are cached.
 
-## Important limitations
-This is an evolving mobile IDE foundation, not a complete replacement for desktop Android Studio. Arbitrary source-project ZIP uploads and cloud builds for external projects are not connected yet. The current GitHub workflow builds this repository. The code editor, terminal, Gradle project importer, real device log capture and plugin action execution still need separate implementation and testing.
+The current web workflow is an offline preview and source-ZIP packaging workflow, not a compiler for every React/Vite/Angular framework. Framework web projects need their generated static output (such as `dist/index.html`) included in the ZIP for preview/package.
 
-Plugin manifests are treated as data only. The app intentionally does not load or execute arbitrary plugin code. APK signing changes the APK's signing identity; it does not rebuild source code, and updating an installed app generally requires the original signing key.
+GitHub Actions is no longer triggered automatically on push. The workflow remains available only for a manual run if needed.
 
 ## Security
-- APK signing and keystore passwords are handled locally in the app; never share your private keystore or passwords.
-- Use only APKs you are authorized to modify/sign.
-- Keep a secure backup of your signing key. If you lose it, you may be unable to publish compatible updates for apps signed with that key.
+- Imported ZIPs are extracted into private app storage; unsafe paths and overlarge extraction are rejected.
+- APK signing uses a local selected keystore. Never share its private key or passwords.
+- Plugin manifests are treated as data only; arbitrary plugin code is not executed.
