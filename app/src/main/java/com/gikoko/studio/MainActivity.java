@@ -855,9 +855,11 @@ public class MainActivity extends Activity {
 
 
     private void showLocalBuildCenter() {
-        beginPage("LOCAL OFFLINE BUILD CENTER");
-        heading("Import ZIP • Build Locally");
-        paragraph("Select a ZIP from your phone. The app extracts it into its private workspace, blocks unsafe ZIP paths, and detects a web project or Android source project. No GitHub Actions request is made by this screen.");
+        beginPage("ONLINE / OFFLINE BUILD CENTER");
+        heading("CHOOSE BUILD MODE");
+        paragraph("ONLINE MODE uses a cloud runner and internet access. OFFLINE MODE works with local project files and can preview/package web projects without a network. Native Android APK builds offline only when JDK, Android SDK and all Gradle dependencies are already installed and cached on the device.");
+        button("ONLINE MODE • GITHUB ACTIONS", () -> showOnlineBuildMode());
+        button("OFFLINE MODE • LOCAL PROJECT", () -> showOfflineBuildMode());
         button("1  •  IMPORT PROJECT ZIP", () -> pickProjectZip());
         if (importedProjectDir != null && importedProjectDir.exists()) {
             paragraph("PROJECT: " + importedProjectDir.getName() + "\nTYPE: " + importedProjectType + "\nLOCATION: app-private workspace");
@@ -877,6 +879,32 @@ public class MainActivity extends Activity {
         sp.topMargin = dp(8);
         page.addView(projectStatus, sp);
         button("BACK TO WORKSPACE", () -> showHome());
+    }
+
+    private void showOnlineBuildMode() {
+        beginPage("ONLINE BUILD MODE");
+        heading("GITHUB ACTIONS • CLOUD BUILD");
+        paragraph("This mode opens the repository's Actions page. The current workflow builds G I KO KO STUDIO itself; it does NOT yet upload an arbitrary imported ZIP to the cloud builder. Internet access and a GitHub account with repository permission may be needed to run or download artifacts.");
+        button("OPEN ACTIONS RUNS", () -> openUrl("https://github.com/gikoko611/G--I-KO-KO-STUDIO/actions"));
+        button("OPEN LATEST WORKFLOW SOURCE", () -> openUrl("https://github.com/gikoko611/G--I-KO-KO-STUDIO/blob/main/.github/workflows/android-build.yml"));
+        button("BACK TO BUILD MODE", () -> showLocalBuildCenter());
+    }
+
+    private void showOfflineBuildMode() {
+        beginPage("OFFLINE BUILD MODE");
+        heading("LOCAL • NO CLOUD BUILD");
+        paragraph("Web projects: preview static HTML locally and package the project ZIP offline. Android projects: import/edit/export source locally, then use Termux Gradle offline mode if the compatible toolchain and dependencies have already been cached. This app does not bundle a full Android SDK or JDK, so native offline APK compilation is not a built-in one-tap feature yet.");
+        button("IMPORT PROJECT ZIP", () -> pickProjectZip());
+        if (importedProjectDir != null && importedProjectDir.exists()) {
+            if ("Web app".equals(importedProjectType)) {
+                button("PREVIEW WEB APP OFFLINE", () -> previewWebProject());
+                button("PACKAGE WEB PROJECT ZIP", () -> packageWebProject());
+            } else {
+                button("EXPORT SOURCE ZIP", () -> exportNativeProject());
+                button("OPEN TERMUX OFFLINE BUILD GUIDE", () -> showNativeBuildGuide());
+            }
+        }
+        button("BACK TO BUILD MODE", () -> showLocalBuildCenter());
     }
 
     private void pickProjectZip() {
@@ -1088,17 +1116,13 @@ public class MainActivity extends Activity {
     }
 
     private void showBuildCenter() {
-        beginPage("BUILD CENTER");
-        heading("Build Center");
-        paragraph("Build APK from Android source projects using the GitHub Actions cloud runner. The current workflow builds this Studio repository; arbitrary imported-project upload is not connected yet.");
-        button("OPEN GITHUB ACTIONS", () -> openUrl("https://github.com/gikoko611/G--I-KO-KO-STUDIO/actions"));
+        beginPage("ONLINE / OFFLINE BUILD");
+        heading("BUILD MODE SELECTOR");
+        paragraph("Choose cloud build or local offline workflow. Cloud builds require internet. Offline web preview/package is local; native offline APK compilation requires a preinstalled and fully cached Termux toolchain.");
+        button("ONLINE MODE • GITHUB ACTIONS", () -> showOnlineBuildMode());
+        button("OFFLINE MODE • LOCAL BUILD CENTER", () -> showOfflineBuildMode());
+        button("IMPORT PROJECT ZIP", () -> pickProjectZip());
         button("OPEN REPOSITORY", () -> openUrl("https://github.com/gikoko611/G--I-KO-KO-STUDIO"));
-        button("PICK SOURCE PROJECT ZIP", () -> {
-            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-            i.setType("application/zip");
-            i.addCategory(Intent.CATEGORY_OPENABLE);
-            startActivityForResult(i, 201);
-        });
         button("BACK TO WORKSPACE", () -> showHome());
     }
 
