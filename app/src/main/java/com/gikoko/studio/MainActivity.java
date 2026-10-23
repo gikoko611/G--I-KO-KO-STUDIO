@@ -251,11 +251,9 @@ public class MainActivity extends Activity {
             button("BACK TO WORKSPACE", () -> showHome());
             return;
         }
-        paragraph("PROJECT: " + importedProjectDir.getName() + "\\nROOT: " + importedProjectDir.getAbsolutePath());
+        paragraph("PROJECT: " + importedProjectDir.getName() + "\nROOT: " + importedProjectDir.getAbsolutePath());
         button("REFRESH FILE LIST", () -> showEditorInfo());
         button("CREATE NEW TEXT FILE", () -> createProjectTextFile());
-        LinearLayout files = column();
-        page.addView(files);
         List<File> found = new ArrayList<>();
         collectEditableFiles(importedProjectDir, found, 0);
         if (found.isEmpty()) {
@@ -264,8 +262,16 @@ public class MainActivity extends Activity {
             paragraph("Editable files (" + found.size() + ", maximum 150):");
             for (File f : found) {
                 String rel = importedProjectDir.toURI().relativize(f.toURI()).getPath();
-                Button open = button("EDIT • " + rel, () -> editProjectFile(f));
+                Button open = new Button(this);
+                open.setText("EDIT • " + rel);
                 open.setTextSize(11);
+                open.setTextColor(Color.rgb(2, 24, 30));
+                open.setAllCaps(false);
+                open.setBackground(shape(green, green));
+                LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(-1, dp(46));
+                fp.bottomMargin = dp(8);
+                page.addView(open, fp);
+                open.setOnClickListener(v -> editProjectFile(f));
             }
         }
         button("BACK TO WORKSPACE", () -> showHome());
@@ -314,7 +320,7 @@ public class MainActivity extends Activity {
             .setPositiveButton("CREATE", (dialog, which) -> {
                 try {
                     String rel = name.getText().toString().trim();
-                    if (rel.isEmpty() || rel.startsWith("/") || rel.contains("..") || rel.contains("\\\\")) {
+                    if (rel.isEmpty() || rel.startsWith("/") || rel.contains("..") || rel.contains("\\")) {
                         throw new Exception("Use a safe relative path without '..'.");
                     }
                     File target = new File(importedProjectDir, rel);
