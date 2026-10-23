@@ -1046,8 +1046,8 @@ public class MainActivity extends Activity {
             button("SAVE CHANGES TO IMPORTED COPY", () -> {
                 try {
                     String edited = editor.getText().toString();
-                    if (edited.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024 * 1024)
-                        throw new Exception("File exceeds the 1 MB editor limit.");
+                    if (edited.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 5L * 1024 * 1024)
+                        throw new Exception("File exceeds the 5 MB editor limit.");
                     try (OutputStream out = new FileOutputStream(file, false)) {
                         out.write(edited.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                     }
