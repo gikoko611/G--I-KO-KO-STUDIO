@@ -863,7 +863,9 @@ public class MainActivity extends Activity {
         button("1  •  IMPORT PROJECT ZIP", () -> pickProjectZip());
         if (importedProjectDir != null && importedProjectDir.exists()) {
             paragraph("PROJECT: " + importedProjectDir.getName() + "\nTYPE: " + importedProjectType + "\nLOCATION: app-private workspace");
-            if ("Web app".equals(importedProjectType)) {
+            button("ANALYZE OFFLINE BUILD READINESS", () -> showOfflineProjectReport());
+            button("BROWSE / EDIT PROJECT FILES", () -> showImportedProjectFiles(importedProjectDir));
+            if ("Web app".equals(importedProjectType) || "Web app (Node framework)".equals(importedProjectType)) {
                 button("2  •  PREVIEW WEB APP OFFLINE", () -> previewWebProject());
                 button("3  •  PACKAGE WEB PROJECT ZIP", () -> packageWebProject());
             } else if ("Android native project".equals(importedProjectType)) {
@@ -881,6 +883,181 @@ public class MainActivity extends Activity {
         button("BACK TO WORKSPACE", () -> showHome());
     }
 
+    private void showOfflineProjectReport() {
+        if (importedProjectDir == null || !importedProjectDir.exists()) {
+            toast("Import a project ZIP first.");
+            return;
+        }
+        beginPage("OFFLINE PROJECT ANALYSIS");
+        heading("LOCAL READINESS REPORT");
+        paragraph("Project: " + importedProjectDir.getName() + "\nDetected type: " + importedProjectType);
+        try {
+            int[] stats = countProjectFiles(importedProjectDir, 0);
+            paragraph("Files: " + stats[0] + "\nDirectories: " + stats[1] +
+                "\nApproximate extracted size: " + formatBytes(projectBytes(importedProjectDir, 0)));
+            File manifest = findFile(importedProjectDir, "AndroidManifest.xml", 7);
+            File gradle = findFile(importedProjectDir, "build.gradle", 7);
+            if (gradle == null) gradle = findFile(importedProjectDir, "build.gradle.kts", 7);
+            File wrapper = findFile(importedProjectDir, "gradlew", 7);
+            File html = findFile(importedProjectDir, "index.html", 7);
+            File packageJson = findFile(importedProjectDir, "package.json", 7);
+            File nodeModules = findDirectory(importedProjectDir, "node_modules", 5);
+            File webOutput = getWebOutputDir();
+            paragraph("CHECKS\n" +
+                (manifest != null ? "✓ Android manifest found\n" : "✗ AndroidManifest.xml not found\n") +
+                (gradle != null ? "✓ Gradle build file found\n" : "✗ build.gradle / build.gradle.kts not found\n") +
+                (wrapper != null ? "✓ Gradle wrapper script found\n" : "✗ gradlew wrapper not found\n") +
+                (html != null ? "✓ HTML entry point found\n" : "✗ index.html not found\n") +
+                (packageJson != null ? "✓ package.json found\n" : "• package.json not found\n") +
+                (nodeModules != null ? "✓ node_modules exists (may be device/ABI incompatible)\n" : "• node_modules not bundled\n") +
+                (webOutput != null ? "✓ Static web output available\n" : "• No root/dist/build index.html output detected"));
+            if (manifest != null && gradle != null) {
+                paragraph("ANDROID RESULT: Source project detected. This report cannot verify SDK availability or dependency cache. A real offline Gradle build is possible only when a compatible JDK, Android SDK/build-tools and all required Gradle/Maven artifacts are already installed and cached.");
+                button("OPEN ANDROID OFFLINE BUILD GUIDE", () -> showNativeBuildGuide());
+                button("EXPORT SOURCE ZIP", () -> exportNativeProject());
+            } else if (html != null) {
+                paragraph("WEB RESULT: A static HTML entry point is available for local preview. Features that depend on remote APIs, CDN scripts, authentication, or server-side routes will still require those services and may not work offline.");
+                button("PREVIEW WEB APP", () -> previewWebProject());
+                button("PACKAGE WEB PROJECT ZIP", () -> packageWebProject());
+            } else if (packageJson != null) {
+                paragraph("FRAMEWORK RESULT: This appears to be a Node-based web project. This app does not run npm install or compile JavaScript bundles. For offline packaging, import a ZIP that already contains built output such as dist/index.html, or build it elsewhere and import the output.");
+                button("EXPORT PROJECT ZIP", () -> exportNativeProject());
+            } else {
+                paragraph("RESULT: Project type is unclear. Browse files to inspect it, or export the source ZIP for use in a compatible local toolchain.");
+                button("EXPORT PROJECT ZIP", () -> exportNativeProject());
+            }
+        } catch (Exception e) {
+            paragraph("Analysis error: " + e.getMessage());
+        }
+        button("BROWSE / EDIT PROJECT FILES", () -> showImportedProjectFiles(importedProjectDir));
+        button("BACK TO OFFLINE MODE", () -> showOfflineBuildMode());
+    }
+
+    private int[] countProjectFiles(File root, int depth) {
+        int[] result = new int[]{0, 0};
+        if (root == null || depth > 30 || !root.isDirectory()) return result;
+        File[] list = root.listFiles();
+        if (list == null) return result;
+        for (File f : list) {
+            if (f.isDirectory()) {
+                result[1]++;
+                int[] child = countProjectFiles(f, depth + 1);
+                result[0] += child[0];
+                result[1] += child[1];
+            } else result[0]++;
+        }
+        return result;
+    }
+
+    private long projectBytes(File root, int depth) {
+        if (root == null || depth > 30) return 0;
+        if (root.isFile()) return root.length();
+        File[] list = root.listFiles();
+        long total = 0;
+        if (list != null) for (File f : list) total += projectBytes(f, depth + 1);
+        return total;
+    }
+
+    private File findDirectory(File root, String name, int depth) {
+        if (root == null || depth < 0 || !root.isDirectory()) return null;
+        File[] list = root.listFiles();
+        if (list == null) return null;
+        for (File f : list) if (f.isDirectory() && name.equals(f.getName())) return f;
+        for (File f : list) if (f.isDirectory()) {
+            File found = findDirectory(f, name, depth - 1);
+            if (found != null) return found;
+        }
+        return null;
+    }
+
+    private String formatBytes(long n) {
+        if (n < 1024) return n + " B";
+        if (n < 1024L * 1024) return String.format(java.util.Locale.US, "%.1f KB", n / 1024.0);
+        return String.format(java.util.Locale.US, "%.1f MB", n / (1024.0 * 1024));
+    }
+
+    private void showImportedProjectFiles(File root) {
+        if (root == null || !root.isDirectory()) { toast("Imported project is not available."); return; }
+        beginPage("LOCAL PROJECT FILES");
+        heading("BROWSE • READ • EDIT");
+        paragraph("Edits apply only to the imported copy inside Studio. Keep source backups before editing. Binary files are listed but cannot be opened as text.");
+        listImportedFiles(root, root, 0);
+        button("BACK TO PROJECT REPORT", () -> showOfflineProjectReport());
+    }
+
+    private void listImportedFiles(File root, File current, int depth) {
+        if (current == null || depth > 5) return;
+        File[] files = current.listFiles();
+        if (files == null) return;
+        java.util.Arrays.sort(files, (a, b) -> {
+            if (a.isDirectory() != b.isDirectory()) return a.isDirectory() ? -1 : 1;
+            return a.getName().compareToIgnoreCase(b.getName());
+        });
+        for (File f : files) {
+            if (f.isDirectory()) {
+                TextView label = text("📁 " + f.getName() + "/", 12, green, true);
+                LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
+                lp.topMargin = dp(5);
+                page.addView(label, lp);
+                listImportedFiles(root, f, depth + 1);
+            } else {
+                long size = f.length();
+                button("📄 " + root.toURI().relativize(f.toURI()).getPath() + " • " + formatBytes(size), () -> editImportedTextFile(root, f));
+            }
+        }
+    }
+
+    private void editImportedTextFile(File root, File file) {
+        String name = file.getName().toLowerCase(java.util.Locale.US);
+        if (file.length() > 1024L * 1024) { toast("Text editor limit is 1 MB per file."); return; }
+        if (!(name.endsWith(".java") || name.endsWith(".kt") || name.endsWith(".xml") ||
+              name.endsWith(".gradle") || name.endsWith(".kts") || name.endsWith(".properties") ||
+              name.endsWith(".json") || name.endsWith(".html") || name.endsWith(".htm") ||
+              name.endsWith(".css") || name.endsWith(".js") || name.endsWith(".ts") ||
+              name.endsWith(".md") || name.endsWith(".txt") || name.endsWith(".yml") ||
+              name.endsWith(".yaml") || name.endsWith(".toml") || name.endsWith(".sh") ||
+              name.endsWith(".py") || name.endsWith(".sql") || name.endsWith(".xml") ||
+              name.equals("dockerfile") || name.equals("makefile"))) {
+            toast("Unsupported/binary file type. Select a text/code file.");
+            return;
+        }
+        try {
+            byte[] data;
+            try (InputStream in = new FileInputStream(file);
+                 java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+                byte[] buf = new byte[4096]; int n;
+                while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                data = out.toByteArray();
+            }
+            String initial = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+            beginPage("LOCAL SOURCE EDITOR");
+            heading(root.toURI().relativize(file.toURI()).getPath());
+            EditText editor = new EditText(this);
+            editor.setGravity(Gravity.TOP | Gravity.START);
+            editor.setTextSize(12);
+            editor.setTextColor(Color.WHITE);
+            editor.setHintTextColor(Color.GRAY);
+            editor.setTypeface(Typeface.MONOSPACE);
+            editor.setMinLines(12);
+            editor.setPadding(dp(10), dp(10), dp(10), dp(10));
+            editor.setBackground(shape(panel, Color.rgb(0, 111, 105)));
+            editor.setText(initial);
+            page.addView(editor, new LinearLayout.LayoutParams(-1, dp(420)));
+            button("SAVE CHANGES TO IMPORTED COPY", () -> {
+                try {
+                    String edited = editor.getText().toString();
+                    if (edited.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 1024 * 1024)
+                        throw new Exception("File exceeds the 1 MB editor limit.");
+                    try (OutputStream out = new FileOutputStream(file, false)) {
+                        out.write(edited.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                    toast("Saved to imported project copy.");
+                } catch (Exception e) { toast("Save failed: " + e.getMessage()); }
+            });
+            button("BACK TO PROJECT FILES", () -> showImportedProjectFiles(root));
+        } catch (Exception e) { toast("Cannot edit file: " + e.getMessage()); }
+    }
+
     private void showOnlineBuildMode() {
         beginPage("ONLINE BUILD MODE");
         heading("GITHUB ACTIONS • CLOUD BUILD");
@@ -896,7 +1073,9 @@ public class MainActivity extends Activity {
         paragraph("Web projects: preview static HTML locally and package the project ZIP offline. Android projects: import/edit/export source locally, then use Termux Gradle offline mode if the compatible toolchain and dependencies have already been cached. This app does not bundle a full Android SDK or JDK, so native offline APK compilation is not a built-in one-tap feature yet.");
         button("IMPORT PROJECT ZIP", () -> pickProjectZip());
         if (importedProjectDir != null && importedProjectDir.exists()) {
-            if ("Web app".equals(importedProjectType)) {
+            button("ANALYZE PROJECT • OFFLINE READINESS", () -> showOfflineProjectReport());
+            button("BROWSE / EDIT PROJECT FILES", () -> showImportedProjectFiles(importedProjectDir));
+            if ("Web app".equals(importedProjectType) || "Web app (Node framework)".equals(importedProjectType)) {
                 button("PREVIEW WEB APP OFFLINE", () -> previewWebProject());
                 button("PACKAGE WEB PROJECT ZIP", () -> packageWebProject());
             } else {
