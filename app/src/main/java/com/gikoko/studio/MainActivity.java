@@ -450,7 +450,9 @@ public class MainActivity extends Activity {
         for (int i = 0; i < old.length(); i++) {
             JSONObject item = old.optJSONObject(i);
             if (item != null && id.equals(item.optString("id"))) {
-                item.put("enabled", enabled);
+                try {
+                    item.put("enabled", enabled);
+                } catch (org.json.JSONException ignored) { }
             }
         }
         savePlugins(old);
