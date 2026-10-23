@@ -1,19 +1,32 @@
 # G I KO KO STUDIO
 
-Android Studio-inspired mobile development workspace with a modern cyber-green interface.
+Android-native mobile development workspace with a modern cyber-green interface.
 
 - App label: **G I KO KO STUDIO**
 - Version: **0.0.1**
 - Application ID: `com.gikoko.studio`
 - Minimum Android: 6.0 (API 23)
 - Build: GitHub Actions / Android SDK / Gradle
-- Initial UI modules: Project Explorer, Code Editor, Build Center, Device & Logs, Settings
+- APK signing: local signing via Android's document picker and a user-provided JKS/PKCS12 keystore
+- Plugin manager: imports JSON manifests and supports enable/disable/remove
+- Sample manifest: `plugins/example-plugin.json`
 
 ## Build APK
 Push to `main` or manually run **Build G I KO KO STUDIO APK** in GitHub Actions. Download the artifact named `G-I-KO-KO-STUDIO-0.0.1`.
 
-## Current scope
-This is the initial project scaffold and interactive UI foundation, not a complete replacement for desktop Android Studio yet. Editor, filesystem operations, terminal, Gradle project import and real device diagnostics need to be implemented and tested in subsequent iterations.
+## Current implemented modules
+- Cyber-themed workspace navigation
+- Local APK signer with V1/V2/V3 signatures (user-provided signing key)
+- Declarative JSON plugin manifest import, listing, enable/disable and remove
+- GitHub Actions build-status links
+- Project ZIP picker foundation
 
-## Branding
-The supplied square G.I image is intended for the launcher icon. The horizontal **Powered by I KO KO** image is intended for the top brand area. Image assets can be added in a follow-up commit.
+## Important limitations
+This is an evolving mobile IDE foundation, not a complete replacement for desktop Android Studio. Arbitrary source-project ZIP uploads and cloud builds for external projects are not connected yet. The current GitHub workflow builds this repository. The code editor, terminal, Gradle project importer, real device log capture and plugin action execution still need separate implementation and testing.
+
+Plugin manifests are treated as data only. The app intentionally does not load or execute arbitrary plugin code. APK signing changes the APK's signing identity; it does not rebuild source code, and updating an installed app generally requires the original signing key.
+
+## Security
+- APK signing and keystore passwords are handled locally in the app; never share your private keystore or passwords.
+- Use only APKs you are authorized to modify/sign.
+- Keep a secure backup of your signing key. If you lose it, you may be unable to publish compatible updates for apps signed with that key.
