@@ -15,6 +15,7 @@ import android.view.animation.AlphaAnimation;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -117,8 +118,15 @@ public class MainActivity extends Activity {
         scroll.addView(page);
         setContentView(scroll);
 
-        TextView brand = text("G.I  ◈  STUDIO", 27, green, true);
-        page.addView(brand);
+        ImageView brandLogo = new ImageView(this);
+        brandLogo.setImageResource(com.gikoko.studio.R.drawable.studio_logo);
+        brandLogo.setScaleType(ImageView.ScaleType.FIT_START);
+        brandLogo.setAdjustViewBounds(true);
+        brandLogo.setMaxHeight(dp(76));
+        LinearLayout.LayoutParams logoParams =
+            new LinearLayout.LayoutParams(-1, dp(76));
+        logoParams.bottomMargin = dp(4);
+        page.addView(brandLogo, logoParams);
         TextView powered = text("Powered by I KO KO   •   " + subtitle, 10,
             Color.rgb(198, 232, 231), true);
         page.addView(powered);
