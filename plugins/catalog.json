@@ -1,0 +1,16 @@
+[
+  {
+    "id": "studio.example",
+    "name": "Example Studio Plugin",
+    "version": "1.0.0",
+    "description": "Sample plugin with safe information action.",
+    "manifest_url": "https://raw.githubusercontent.com/gikoko611/G--I-KO-KO-STUDIO/main/plugins/example-plugin.json"
+  },
+  {
+    "id": "studio.web-tools",
+    "name": "Web Tools Plugin",
+    "version": "1.0.0",
+    "description": "Safe helper actions for web project workflow.",
+    "manifest_url": "https://raw.githubusercontent.com/gikoko611/G--I-KO-KO-STUDIO/main/plugins/web-tools-plugin.json"
+  }
+]
