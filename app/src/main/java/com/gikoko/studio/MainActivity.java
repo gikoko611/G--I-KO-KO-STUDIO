@@ -18,6 +18,15 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.webkit.WebView;
+import android.webkit.WebSettings;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
+import java.io.BufferedInputStream;
 
 import com.android.apksig.ApkSigner;
 
@@ -43,6 +52,9 @@ public class MainActivity extends Activity {
     private static final int PICK_KEYSTORE = 102;
     private static final int SAVE_SIGNED_APK = 103;
     private static final int PICK_PLUGIN = 104;
+    private static final int PICK_PROJECT_ZIP = 201;
+    private static final int SAVE_PROJECT_ZIP = 202;
+    private static final int SAVE_WEB_BUILD = 203;
 
     private final int bg = Color.rgb(4, 13, 25);
     private final int panel = Color.rgb(9, 29, 43);
@@ -53,6 +65,10 @@ public class MainActivity extends Activity {
     private File signedTemp;
     private EditText aliasInput, storePasswordInput, keyPasswordInput;
     private TextView signerStatus;
+    private File importedProjectDir;
+    private File importedProjectZip;
+    private String importedProjectType = "Unknown";
+    private TextView projectStatus;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -181,6 +197,7 @@ public class MainActivity extends Activity {
         heading("WORKSPACE");
         button("PROJECT EXPLORER", () -> showProjectExplorer());
         button("CODE EDITOR", () -> showEditorInfo());
+        button("LOCAL BUILD CENTER  •  ZIP IMPORT", () -> showLocalBuildCenter());
         button("BUILD CENTER  •  APK OUTPUT", () -> showBuildCenter());
         button("APK SIGNER", () -> showSigner());
         button("PLUGIN MANAGER", () -> showPlugins());
@@ -220,6 +237,227 @@ public class MainActivity extends Activity {
         paragraph("Editor foundation is planned for Java, Kotlin, XML, JSON and Gradle with syntax highlighting, tabs, find/replace and project file operations. This screen is a roadmap, not yet a full code editor.");
         button("OPEN PROJECT EXPLORER", () -> showProjectExplorer());
         button("BACK TO WORKSPACE", () -> showHome());
+    }
+
+
+    private void showLocalBuildCenter() {
+        beginPage("LOCAL OFFLINE BUILD CENTER");
+        heading("Import ZIP • Build Locally");
+        paragraph("Select a ZIP from your phone. The app extracts it into its private workspace, blocks unsafe ZIP paths, and detects a web project or Android source project. No GitHub Actions request is made by this screen.");
+        button("1  •  IMPORT PROJECT ZIP", () -> pickProjectZip());
+        if (importedProjectDir != null && importedProjectDir.exists()) {
+            paragraph("PROJECT: " + importedProjectDir.getName() + "\nTYPE: " + importedProjectType + "\nLOCATION: app-private workspace");
+            if ("Web app".equals(importedProjectType)) {
+                button("2  •  PREVIEW WEB APP OFFLINE", () -> previewWebProject());
+                button("3  •  PACKAGE WEB PROJECT ZIP", () -> packageWebProject());
+            } else if ("Android native project".equals(importedProjectType)) {
+                button("2  •  EXPORT SOURCE ZIP FOR LOCAL BUILD", () -> exportNativeProject());
+                button("3  •  SHOW TERMUX BUILD GUIDE", () -> showNativeBuildGuide());
+            } else {
+                button("EXPORT PROJECT ZIP", () -> exportNativeProject());
+                button("SHOW BUILD GUIDE", () -> showNativeBuildGuide());
+            }
+        }
+        projectStatus = text("Offline: ready to import a project.", 12, Color.rgb(185, 211, 220), false);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
+        sp.topMargin = dp(8);
+        page.addView(projectStatus, sp);
+        button("BACK TO WORKSPACE", () -> showHome());
+    }
+
+    private void pickProjectZip() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.setType("application/zip");
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        startActivityForResult(i, PICK_PROJECT_ZIP);
+    }
+
+    private void importProjectZip(Uri uri) {
+        new Thread(() -> {
+            try {
+                File zip = copyUriToCache(uri, "project-import-" + System.currentTimeMillis() + ".zip");
+                File root = new File(getFilesDir(), "local-projects");
+                if (!root.exists() && !root.mkdirs()) throw new Exception("Cannot create local workspace.");
+                File dest = new File(root, "project-" + System.currentTimeMillis());
+                if (!dest.mkdirs()) throw new Exception("Cannot create project folder.");
+                extractZipSafely(zip, dest);
+                String type = detectProjectType(dest);
+                runOnUiThread(() -> {
+                    importedProjectZip = zip;
+                    importedProjectDir = dest;
+                    importedProjectType = type;
+                    toast("Project imported locally: " + type);
+                    showLocalBuildCenter();
+                });
+            } catch (Exception e) {
+                String msg = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
+                runOnUiThread(() -> toast("ZIP import failed: " + msg));
+            }
+        }).start();
+    }
+
+    private void extractZipSafely(File zip, File destination) throws Exception {
+        String canonicalRoot = destination.getCanonicalPath() + File.separator;
+        int entries = 0;
+        long totalBytes = 0;
+        try (ZipInputStream zis = new ZipInputStream(new BufferedInputStream(new FileInputStream(zip)))) {
+            ZipEntry entry;
+            byte[] buffer = new byte[8192];
+            while ((entry = zis.getNextEntry()) != null) {
+                if (++entries > 10000) throw new Exception("ZIP contains too many entries (limit 10,000).");
+                File out = new File(destination, entry.getName());
+                String canonical = out.getCanonicalPath();
+                if (!canonical.startsWith(canonicalRoot) && !canonical.equals(destination.getCanonicalPath())) {
+                    throw new Exception("Unsafe ZIP path rejected: " + entry.getName());
+                }
+                if (entry.isDirectory()) {
+                    if (!out.exists() && !out.mkdirs()) throw new Exception("Cannot create directory.");
+                } else {
+                    File parent = out.getParentFile();
+                    if (parent != null && !parent.exists() && !parent.mkdirs()) throw new Exception("Cannot create project folder.");
+                    try (FileOutputStream fos = new FileOutputStream(out)) {
+                        int n;
+                        while ((n = zis.read(buffer)) != -1) {
+                            totalBytes += n;
+                            if (totalBytes > 200L * 1024L * 1024L) throw new Exception("Extracted project exceeds 200 MB limit.");
+                            fos.write(buffer, 0, n);
+                        }
+                    }
+                }
+                zis.closeEntry();
+            }
+        }
+    }
+
+    private String detectProjectType(File root) {
+        if (findFile(root, "AndroidManifest.xml", 7) != null &&
+            (findFile(root, "build.gradle", 7) != null || findFile(root, "build.gradle.kts", 7) != null)) {
+            return "Android native project";
+        }
+        if (findFile(root, "index.html", 7) != null) return "Web app";
+        if (findFile(root, "package.json", 7) != null) return "Web app (Node framework)";
+        return "Unknown / source project";
+    }
+
+    private File findFile(File root, String name, int depth) {
+        if (root == null || depth < 0 || !root.isDirectory()) return null;
+        File[] files = root.listFiles();
+        if (files == null) return null;
+        for (File f : files) {
+            if (f.isFile() && name.equals(f.getName())) return f;
+        }
+        for (File f : files) {
+            if (f.isDirectory()) {
+                File found = findFile(f, name, depth - 1);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    private void previewWebProject() {
+        if (importedProjectDir == null) return;
+        File index = findFile(importedProjectDir, "index.html", 7);
+        if (index == null) {
+            toast("No index.html found. Framework projects need their build output first.");
+            return;
+        }
+        ScrollView scroll = new ScrollView(this);
+        LinearLayout wrap = column();
+        wrap.setPadding(dp(8), dp(8), dp(8), dp(8));
+        wrap.setBackgroundColor(bg);
+        scroll.addView(wrap);
+        TextView top = text("OFFLINE WEB PREVIEW  •  " + importedProjectDir.getName(), 13, green, true);
+        wrap.addView(top);
+        WebView web = new WebView(this);
+        WebSettings settings = web.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(false);
+        web.setBackgroundColor(Color.WHITE);
+        wrap.addView(web, new LinearLayout.LayoutParams(-1, dp(520)));
+        Button back = new Button(this);
+        back.setText("BACK TO BUILD CENTER");
+        back.setOnClickListener(v -> showLocalBuildCenter());
+        wrap.addView(back);
+        setContentView(scroll);
+        web.loadUrl("file://" + index.getAbsolutePath());
+    }
+
+    private void packageWebProject() {
+        if (importedProjectDir == null) return;
+        try {
+            File out = new File(getCacheDir(), "GI-Web-Build-" + System.currentTimeMillis() + ".zip");
+            zipDirectory(importedProjectDir, out);
+            Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            save.addCategory(Intent.CATEGORY_OPENABLE);
+            save.setType("application/zip");
+            save.putExtra(Intent.EXTRA_TITLE, "GI-Web-App-Build.zip");
+            pendingExport = out;
+            startActivityForResult(save, SAVE_WEB_BUILD);
+        } catch (Exception e) {
+            toast("Web package failed: " + e.getMessage());
+        }
+    }
+
+    private File pendingExport;
+
+    private void exportNativeProject() {
+        if (importedProjectDir == null) return;
+        try {
+            File out = new File(getCacheDir(), "GI-Project-Source-" + System.currentTimeMillis() + ".zip");
+            zipDirectory(importedProjectDir, out);
+            pendingExport = out;
+            Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            save.addCategory(Intent.CATEGORY_OPENABLE);
+            save.setType("application/zip");
+            save.putExtra(Intent.EXTRA_TITLE, "GI-Android-Project-Source.zip");
+            startActivityForResult(save, SAVE_PROJECT_ZIP);
+        } catch (Exception e) {
+            toast("Project export failed: " + e.getMessage());
+        }
+    }
+
+    private void zipDirectory(File root, File output) throws Exception {
+        String base = root.getCanonicalPath();
+        byte[] buffer = new byte[8192];
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(output))) {
+            zipChildren(root, root, zos, buffer);
+        }
+    }
+
+    private void zipChildren(File root, File current, ZipOutputStream zos, byte[] buffer) throws Exception {
+        File[] children = current.listFiles();
+        if (children == null) return;
+        for (File child : children) {
+            if (child.equals(getCacheDir())) continue;
+            String name = root.toURI().relativize(child.toURI()).getPath();
+            if (child.isDirectory()) {
+                zipChildren(root, child, zos, buffer);
+            } else {
+                zos.putNextEntry(new ZipEntry(name));
+                try (InputStream in = new FileInputStream(child)) {
+                    int n;
+                    while ((n = in.read(buffer)) != -1) zos.write(buffer, 0, n);
+                }
+                zos.closeEntry();
+            }
+        }
+    }
+
+    private void showNativeBuildGuide() {
+        beginPage("LOCAL NATIVE BUILD GUIDE");
+        heading("Android Native Project");
+        paragraph("This app can import and stage an Android source ZIP locally. Building an APK from Gradle source requires a compatible JDK, Android SDK platform/build-tools and all Gradle/Maven dependencies already installed or cached. Redmi 9A ARMv7 has limited RAM/storage; this Studio APK does not bundle a full Android SDK, so it cannot honestly promise a one-tap fully offline native build by itself.");
+        paragraph("Recommended local handoff: export the source ZIP, extract it in Termux, then run Gradle assembleDebug after you have configured a compatible Android SDK and downloaded dependencies once. Offline builds work only after dependencies are cached.");
+        String command = "termux-setup-storage\nmkdir -p ~/GI-STUDIO-BUILDS && cd ~/GI-STUDIO-BUILDS\n# Copy/extract your exported ZIP here, then enter the project folder\nunzip ~/storage/downloads/GI-Android-Project-Source.zip -d project\ncd project\ngradle --offline assembleDebug";
+        button("COPY TERMUX BUILD COMMAND", () -> {
+            ClipboardManager cm = (ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+            cm.setPrimaryClip(ClipData.newPlainText("Termux build command", command));
+            toast("Command copied. Review/edit ZIP filename and SDK setup before running.");
+        });
+        button("EXPORT SOURCE ZIP", () -> exportNativeProject());
+        button("BACK TO BUILD CENTER", () -> showLocalBuildCenter());
     }
 
     private void showBuildCenter() {
@@ -523,6 +761,16 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 toast("Could not save signed APK: " + e.getMessage());
             }
+        } else if (requestCode == PICK_PROJECT_ZIP) {
+            importProjectZip(uri);
+        } else if (requestCode == SAVE_PROJECT_ZIP || requestCode == SAVE_WEB_BUILD) {
+            if (pendingExport == null) { toast("Export file is missing."); return; }
+            try (InputStream in = new FileInputStream(pendingExport); OutputStream out = getContentResolver().openOutputStream(uri)) {
+                if (out == null) throw new Exception("Cannot open output destination.");
+                byte[] buffer = new byte[8192]; int n;
+                while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
+                toast(requestCode == SAVE_WEB_BUILD ? "Web project ZIP exported." : "Source project ZIP exported.");
+            } catch (Exception e) { toast("Export failed: " + e.getMessage()); }
         } else if (requestCode == PICK_PLUGIN) {
             importPlugin(uri);
         } else if (requestCode == 201) {
