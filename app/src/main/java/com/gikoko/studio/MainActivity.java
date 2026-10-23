@@ -77,6 +77,10 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         getWindow().setStatusBarColor(Color.rgb(3, 12, 22));
         getWindow().setNavigationBarColor(Color.rgb(3, 12, 22));
+        String savedTree = getSharedPreferences("studio_files", MODE_PRIVATE).getString("tree_uri", null);
+        if (savedTree != null) {
+            try { phoneTreeUri = Uri.parse(savedTree); } catch (Exception ignored) {}
+        }
         showHome();
     }
 
@@ -195,6 +199,152 @@ public class MainActivity extends Activity {
         return getSharedPreferences("studio_ai", MODE_PRIVATE);
     }
 
+
+    private static final int PICK_PHONE_FOLDER = 204;
+    private static final int PICK_PHONE_FILE = 205;
+    private Uri phoneTreeUri;
+    private Uri selectedPhoneFileUri;
+    private String selectedPhoneFileName = "";
+    private String selectedPhoneFileContent = "";
+    private EditText phoneFileEditor;
+
+    private void choosePhoneFolder() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                   Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(i, PICK_PHONE_FOLDER);
+    }
+
+    private void showPhoneFiles() {
+        beginPage("PHONE FILE MANAGER");
+        heading("USER-GRANTED FILE ACCESS");
+        paragraph("Choose a folder with Android's system folder picker. Studio can list, read and write files only inside folders you grant. Android/data and some protected folders may be inaccessible.");
+        button("CHOOSE PHONE FOLDER", () -> choosePhoneFolder());
+        button("OPEN FILE TO READ / EDIT", () -> pickPhoneFile());
+        if (phoneTreeUri != null) {
+            paragraph("Granted folder:\n" + phoneTreeUri);
+            button("LIST GRANTED FOLDER", () -> listPhoneTree());
+            button("RELEASE FOLDER ACCESS", () -> {
+                try {
+                    getContentResolver().releasePersistableUriPermission(phoneTreeUri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                } catch (Exception ignored) {}
+                phoneTreeUri = null;
+                getSharedPreferences("studio_files", MODE_PRIVATE).edit().remove("tree_uri").apply();
+                toast("Folder access released");
+                showPhoneFiles();
+            });
+        }
+        button("BACK TO WORKSPACE", () -> showHome());
+    }
+
+    private void pickPhoneFile() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                   Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(i, PICK_PHONE_FILE);
+    }
+
+    private void listPhoneTree() {
+        if (phoneTreeUri == null) { toast("Choose a folder first"); return; }
+        beginPage("PHONE FOLDER CONTENTS");
+        heading("FILES & FOLDERS");
+        try {
+            String treeId = android.provider.DocumentsContract.getTreeDocumentId(phoneTreeUri);
+            Uri children = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(phoneTreeUri, treeId);
+            try (android.database.Cursor cur = getContentResolver().query(children,
+                new String[]{android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE,
+                    android.provider.DocumentsContract.Document.COLUMN_SIZE}, null, null,
+                    android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME + " ASC")) {
+                if (cur == null) throw new Exception("Folder provider returned no cursor");
+                int count = 0;
+                while (cur.moveToNext() && count < 250) {
+                    String id = cur.getString(0), name = cur.getString(1);
+                    String mime = cur.getString(2);
+                    long size = cur.isNull(3) ? -1 : cur.getLong(3);
+                    Uri child = android.provider.DocumentsContract.buildDocumentUriUsingTree(phoneTreeUri, id);
+                    boolean directory = android.provider.DocumentsContract.Document.MIME_TYPE_DIR.equals(mime);
+                    button((directory ? "[FOLDER] " : "[FILE] ") + name + (size >= 0 && !directory ? " • " + size + " B" : ""),
+                        () -> {
+                            if (directory) toast("For subfolders, choose that folder in the system picker.");
+                            else openPhoneFile(child, name);
+                        });
+                    count++;
+                }
+                if (count == 0) paragraph("This folder is empty.");
+                else paragraph("Showing up to " + count + " direct children.");
+            }
+        } catch (Exception e) { paragraph("Cannot list this folder: " + e.getMessage()); }
+        button("BACK TO FILE MANAGER", () -> showPhoneFiles());
+    }
+
+    private void openPhoneFile(Uri uri, String name) {
+        try {
+            String content;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new Exception("Cannot open file");
+                java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[4096]; int n; int total = 0;
+                while ((n = in.read(buf)) > 0) {
+                    total += n;
+                    if (total > 1024 * 1024) throw new Exception("File exceeds 1 MB text editor limit");
+                    out.write(buf, 0, n);
+                }
+                content = new String(out.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+            }
+            selectedPhoneFileUri = uri;
+            selectedPhoneFileName = name;
+            selectedPhoneFileContent = content;
+            beginPage("PHONE FILE EDITOR");
+            heading(name);
+            paragraph("Read/write through Android Storage Access Framework. Only save changes after reviewing them. Binary files are not supported by this text editor.");
+            phoneFileEditor = new EditText(this);
+            phoneFileEditor.setText(content);
+            phoneFileEditor.setTextColor(Color.WHITE);
+            phoneFileEditor.setHintTextColor(Color.GRAY);
+            phoneFileEditor.setGravity(Gravity.TOP | Gravity.START);
+            phoneFileEditor.setTextSize(12);
+            phoneFileEditor.setPadding(dp(10), dp(10), dp(10), dp(10));
+            phoneFileEditor.setBackground(shape(panel, green));
+            LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, dp(330));
+            page.addView(phoneFileEditor, ep);
+            button("SAVE FILE (OVERWRITE)", () -> savePhoneFile());
+            button("ASK AI TO EDIT THIS FILE", () -> {
+                String ctx = phoneFileEditor.getText().toString();
+                selectedPhoneFileContent = ctx;
+                aiPrefs().edit().putString("file_context_name", selectedPhoneFileName)
+                    .putString("file_context", ctx).apply();
+                showAiAssistant();
+                if (aiChatInput != null) aiChatInput.setText("Please review the currently selected file '" + selectedPhoneFileName + "' and propose a corrected full-file version. Explain changes first. Do not claim you saved it; I will review and save manually.");
+            });
+            button("BACK TO FILE MANAGER", () -> showPhoneFiles());
+        } catch (Exception e) { toast("Read failed: " + e.getMessage()); }
+    }
+
+    private void savePhoneFile() {
+        if (selectedPhoneFileUri == null || phoneFileEditor == null) {
+            toast("Open a file first"); return;
+        }
+        final String replacement = phoneFileEditor.getText().toString();
+        new android.app.AlertDialog.Builder(this)
+            .setTitle("Overwrite " + selectedPhoneFileName + "?")
+            .setMessage("This replaces the selected file contents. Check that the file is text and keep a backup if needed.")
+            .setNegativeButton("CANCEL", (d,w) -> {})
+            .setPositiveButton("OVERWRITE FILE", (d,w) -> {
+                try (OutputStream out = getContentResolver().openOutputStream(selectedPhoneFileUri, "wt")) {
+                    if (out == null) throw new Exception("Cannot open output stream");
+                    out.write(replacement.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    out.flush();
+                    selectedPhoneFileContent = replacement;
+                    toast("File saved");
+                } catch (Exception e) { toast("Save failed: " + e.getMessage()); }
+            }).show();
+    }
+
     private void showAiAssistant() {
         beginPage("G.I AI ASSISTANT");
         heading("G.I AI • CUSTOM PROVIDER");
@@ -223,6 +373,7 @@ public class MainActivity extends Activity {
         page.addView(aiChatInput, ip);
         button("SEND TO AI", () -> sendAiMessage());
         button("CLEAR CHAT", () -> { aiChatHistory = ""; showAiAssistant(); });
+        button("PRO AGENT • READ / WRITE PHONE FILES", () -> showPhoneFiles());
         button("SKILLS & PHONE CONNECTORS", () -> showAiSkills());
         button("BACK TO WORKSPACE", () -> showHome());
     }
@@ -351,6 +502,11 @@ public class MainActivity extends Activity {
                 JSONArray messages = new JSONArray();
                 messages.put(new JSONObject().put("role","system").put("content",
                     "You are G.I AI inside G I KO KO STUDIO, a mobile-first Android development studio. Help with Android, Java, Kotlin, Termux, GitHub Actions, debugging, plugins and safe phone workflows. You cannot directly inspect or control the device. Only suggest actions the user explicitly approves; never claim a phone action was performed unless the app actually reports it."));
+                String fileName = aiPrefs().getString("file_context_name", "");
+                String fileContext = aiPrefs().getString("file_context", "");
+                if (!fileName.isEmpty() && !fileContext.isEmpty()) {
+                    messages.put(new JSONObject().put("role","user").put("content", "Current user-selected file context (read-only context; never assume it has been changed): " + fileName + "\n\n" + fileContext));
+                }
                 messages.put(new JSONObject().put("role","user").put("content", question));
                 body.put("messages", messages);
                 byte[] bytes = body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -432,6 +588,7 @@ public class MainActivity extends Activity {
         button("BUILD CENTER  •  APK OUTPUT", () -> showBuildCenter());
         button("APK SIGNER", () -> showSigner());
         button("G.I AI ASSISTANT  •  CUSTOM PROVIDERS", () -> showAiAssistant());
+        button("PHONE FILE MANAGER  •  READ / WRITE", () -> showPhoneFiles());
         button("PLUGIN MANAGER", () -> showPlugins());
         button("DEVICE & BUILD DIAGNOSTICS", () -> showDiagnostics());
         button("SETTINGS & ABOUT", () -> showAbout());
@@ -1316,6 +1473,21 @@ public class MainActivity extends Activity {
             } catch (Exception e) {
                 toast("Could not save signed APK: " + e.getMessage());
             }
+        } else if (requestCode == PICK_PHONE_FOLDER) {
+            phoneTreeUri = uri;
+            int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            try { getContentResolver().takePersistableUriPermission(uri, flags); } catch (Exception ignored) {}
+            getSharedPreferences("studio_files", MODE_PRIVATE).edit().putString("tree_uri", uri.toString()).apply();
+            toast("Folder access granted");
+            showPhoneFiles();
+        } else if (requestCode == PICK_PHONE_FILE) {
+            int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            try { getContentResolver().takePersistableUriPermission(uri, flags); } catch (Exception ignored) {}
+            String name = "selected-file";
+            try (android.database.Cursor cur = getContentResolver().query(uri, new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (cur != null && cur.moveToFirst()) name = cur.getString(0);
+            } catch (Exception ignored) {}
+            openPhoneFile(uri, name);
         } else if (requestCode == PICK_PROJECT_ZIP) {
             importProjectZip(uri);
         } else if (requestCode == SAVE_PROJECT_ZIP || requestCode == SAVE_WEB_BUILD) {
