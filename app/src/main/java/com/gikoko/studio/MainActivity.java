@@ -774,7 +774,7 @@ public class MainActivity extends Activity {
                     boolean videoExtension = path.endsWith(".mp4") || path.endsWith(".mov") ||
                         path.endsWith(".m4v") || path.endsWith(".webm") || path.endsWith(".3gp");
                     if (!videoType && !videoExtension) throw new Exception("This URL did not return a recognizable video file. Try a direct MP4/MOV link or select the video from your phone.");
-                    long length = connection.getContentLengthLong();
+                    long length = connection.getContentLength();
                     if (length > MAX_VIDEO_IMPORT_BYTES) throw new Exception("Video exceeds the 300 MB import limit.");
                     File dir = new File(getCacheDir(), "video_imports");
                     if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create import folder.");
