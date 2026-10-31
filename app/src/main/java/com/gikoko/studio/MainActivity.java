@@ -862,7 +862,8 @@ public class MainActivity extends Activity {
         button("LOCAL BUILD CENTER  •  ZIP IMPORT", () -> showLocalBuildCenter());
         button("BUILD CENTER  •  APK OUTPUT", () -> showBuildCenter());
         button("APK SIGNER", () -> showSigner());
-        button("AI VIDEO TRANSLATOR • URL IMPORT", () -> showUrlVideoImport());\n        button("G.I AI ASSISTANT  •  CUSTOM PROVIDERS", () -> showAiAssistant());
+        button("AI VIDEO TRANSLATOR • URL IMPORT", () -> showUrlVideoImport());
+        button("G.I AI ASSISTANT  •  CUSTOM PROVIDERS", () -> showAiAssistant());
         button("PHONE FILE MANAGER  •  READ / WRITE", () -> showPhoneFiles());
         button("PLUGIN MANAGER", () -> showPlugins());
         button("DEVICE & BUILD DIAGNOSTICS", () -> showDiagnostics());
@@ -1988,7 +1989,8 @@ public class MainActivity extends Activity {
                 if (cur != null && cur.moveToFirst()) name = cur.getString(0);
             } catch (Exception ignored) {}
             openPhoneFile(uri, name);
-        } else if (requestCode == PICK_VIDEO_URL) {\n            importVideoFromPhone(uri);\n            showUrlVideoImport();\n        } else if (requestCode == PICK_PROJECT_ZIP) {
+        } else if (requestCode == PICK_VIDEO_URL) {
+            importVideoFromPhone(uri);\n            showUrlVideoImport();\n        } else if (requestCode == PICK_PROJECT_ZIP) {
             importProjectZip(uri);
         } else if (requestCode == SAVE_PROJECT_ZIP || requestCode == SAVE_WEB_BUILD) {
             if (pendingExport == null) { toast("Export file is missing."); return; }
