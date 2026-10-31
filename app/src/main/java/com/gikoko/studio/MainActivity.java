@@ -58,6 +58,8 @@ public class MainActivity extends Activity {
     private static final int PICK_PROJECT_ZIP = 201;
     private static final int SAVE_PROJECT_ZIP = 202;
     private static final int SAVE_WEB_BUILD = 203;
+    private static final int PICK_VIDEO_URL = 206;
+    private static final long MAX_VIDEO_IMPORT_BYTES = 300L * 1024L * 1024L;
 
     private final int bg = Color.rgb(4, 13, 25);
     private final int panel = Color.rgb(9, 29, 43);
@@ -72,6 +74,10 @@ public class MainActivity extends Activity {
     private File importedProjectZip;
     private String importedProjectType = "Unknown";
     private TextView projectStatus;
+    private EditText videoUrlInput;
+    private TextView videoImportStatus;
+    private volatile boolean videoImportRunning = false;
+    private File importedVideoFile;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -677,6 +683,161 @@ public class MainActivity extends Activity {
         }
     }
 
+
+    // URL Video Import: direct HTTPS media URLs are downloaded locally.
+    // Social-platform page URLs need a compliant resolver/backend and are not scraped here.
+    private void showUrlVideoImport() {
+        beginPage("AI VIDEO TRANSLATOR • IMPORT");
+        heading("IMPORT VIDEO BY URL");
+        paragraph("Paste a direct HTTPS video URL (MP4/MOV/WebM). Public social-platform page links may need a supported official resolver; login-protected, private or DRM-protected videos are not downloaded.");
+        videoUrlInput = field("Paste video URL (https://...)", false);
+        videoUrlInput.setSingleLine(true);
+        button("PASTE FROM CLIPBOARD", () -> {
+            try {
+                ClipboardManager cm = (ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+                ClipData clip = cm == null ? null : cm.getPrimaryClip();
+                if (clip != null && clip.getItemCount() > 0) {
+                    CharSequence value = clip.getItemAt(0).coerceToText(this);
+                    if (value != null) videoUrlInput.setText(value.toString().trim());
+                } else toast("Clipboard is empty.");
+            } catch (Exception e) { toast("Could not read clipboard."); }
+        });
+        button("IMPORT DIRECT VIDEO URL", () -> importVideoFromUrl());
+        button("SELECT VIDEO FROM PHONE", () -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("video/*");
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            startActivityForResult(i, PICK_VIDEO_URL);
+        });
+        videoImportStatus = text("STATUS: Waiting for a video.", 12, Color.rgb(190, 215, 224), false);
+        videoImportStatus.setPadding(dp(12), dp(12), dp(12), dp(12));
+        videoImportStatus.setBackground(shape(panel, Color.rgb(0, 111, 105)));
+        page.addView(videoImportStatus, new LinearLayout.LayoutParams(-1, -2));
+        if (importedVideoFile != null && importedVideoFile.isFile()) {
+            paragraph("Imported video: " + importedVideoFile.getName() +
+                "\\nSize: " + (importedVideoFile.length() / (1024 * 1024)) + " MB");
+        }
+        paragraph("Next step: connect this imported video to the transcription → Gemini Myanmar translation → Burmese voice → subtitle and MP4 export pipeline.");
+        button("BACK TO WORKSPACE", () -> showHome());
+    }
+
+    private void setVideoImportStatus(String message) {
+        runOnUiThread(() -> {
+            if (videoImportStatus != null) videoImportStatus.setText(message);
+            else toast(message);
+        });
+    }
+
+    private void importVideoFromUrl() {
+        if (videoImportRunning) { toast("A video import is already running."); return; }
+        String address = videoUrlInput == null ? "" : videoUrlInput.getText().toString().trim();
+        if (address.isEmpty()) { toast("Paste a video URL first."); return; }
+        Uri parsed;
+        try { parsed = Uri.parse(address); }
+        catch (Exception e) { toast("Invalid URL."); return; }
+        if (!"https".equalsIgnoreCase(parsed.getScheme()) || parsed.getHost() == null ||
+            parsed.getUserInfo() != null) {
+            toast("Use a valid HTTPS video URL.");
+            return;
+        }
+        videoImportRunning = true;
+        setVideoImportStatus("STATUS: Connecting to video URL…");
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            File temp = null;
+            try {
+                URL current = new URL(address);
+                int redirects = 0;
+                while (true) {
+                    connection = (HttpURLConnection) current.openConnection();
+                    connection.setConnectTimeout(15000);
+                    connection.setReadTimeout(30000);
+                    connection.setInstanceFollowRedirects(false);
+                    connection.setRequestMethod("GET");
+                    connection.setRequestProperty("User-Agent", "GIKOKOSTUDIO/0.1 Android");
+                    int code = connection.getResponseCode();
+                    if (code >= 300 && code < 400) {
+                        String location = connection.getHeaderField("Location");
+                        connection.disconnect();
+                        connection = null;
+                        if (location == null || ++redirects > 5) throw new Exception("Too many or invalid redirects.");
+                        URL next = new URL(current, location);
+                        if (!"https".equalsIgnoreCase(next.getProtocol())) throw new Exception("Insecure redirect blocked.");
+                        current = next;
+                        continue;
+                    }
+                    if (code != HttpURLConnection.HTTP_OK) throw new Exception("Server returned HTTP " + code + ". This may be a platform page, not a direct video file.");
+                    String type = connection.getContentType();
+                    String path = current.getPath() == null ? "" : current.getPath().toLowerCase(java.util.Locale.ROOT);
+                    boolean videoType = type != null && type.toLowerCase(java.util.Locale.ROOT).startsWith("video/");
+                    boolean videoExtension = path.endsWith(".mp4") || path.endsWith(".mov") ||
+                        path.endsWith(".m4v") || path.endsWith(".webm") || path.endsWith(".3gp");
+                    if (!videoType && !videoExtension) throw new Exception("This URL did not return a recognizable video file. Try a direct MP4/MOV link or select the video from your phone.");
+                    long length = connection.getContentLengthLong();
+                    if (length > MAX_VIDEO_IMPORT_BYTES) throw new Exception("Video exceeds the 300 MB import limit.");
+                    File dir = new File(getCacheDir(), "video_imports");
+                    if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create import folder.");
+                    temp = new File(dir, "gi_video_" + System.currentTimeMillis() + ".mp4");
+                    try (InputStream in = new BufferedInputStream(connection.getInputStream());
+                         OutputStream out = new FileOutputStream(temp)) {
+                        byte[] buffer = new byte[32768];
+                        long total = 0;
+                        int n;
+                        while ((n = in.read(buffer)) != -1) {
+                            total += n;
+                            if (total > MAX_VIDEO_IMPORT_BYTES) throw new Exception("Video exceeded the 300 MB import limit.");
+                            out.write(buffer, 0, n);
+                            if (total % (1024 * 1024) < buffer.length) {
+                                setVideoImportStatus("STATUS: Downloading " + (total / (1024 * 1024)) + " MB…");
+                            }
+                        }
+                    }
+                    if (temp.length() < 1024) throw new Exception("Downloaded file is empty or incomplete.");
+                    importedVideoFile = temp;
+                    File finalFile = temp;
+                    setVideoImportStatus("SUCCESS: Imported " + finalFile.getName() + " (" +
+                        (finalFile.length() / (1024 * 1024)) + " MB).");
+                    break;
+                }
+            } catch (Exception e) {
+                if (temp != null && temp.exists()) temp.delete();
+                String message = e.getMessage() == null ? "Video import failed." : e.getMessage();
+                setVideoImportStatus("IMPORT FAILED: " + message);
+            } finally {
+                if (connection != null) connection.disconnect();
+                videoImportRunning = false;
+            }
+        }).start();
+    }
+
+    private void importVideoFromPhone(Uri uri) {
+        setVideoImportStatus("STATUS: Copying selected video…");
+        new Thread(() -> {
+            File temp = null;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new Exception("Cannot open selected video.");
+                File dir = new File(getCacheDir(), "video_imports");
+                if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create import folder.");
+                temp = new File(dir, "gi_video_" + System.currentTimeMillis() + ".mp4");
+                try (OutputStream out = new FileOutputStream(temp)) {
+                    byte[] buffer = new byte[32768]; long total = 0; int n;
+                    while ((n = in.read(buffer)) != -1) {
+                        total += n;
+                        if (total > MAX_VIDEO_IMPORT_BYTES) throw new Exception("Video exceeds the 300 MB import limit.");
+                        out.write(buffer, 0, n);
+                    }
+                }
+                if (temp.length() < 1024) throw new Exception("Selected video is empty.");
+                importedVideoFile = temp;
+                setVideoImportStatus("SUCCESS: Video imported (" + (temp.length() / (1024 * 1024)) + " MB).");
+            } catch (Exception e) {
+                if (temp != null && temp.exists()) temp.delete();
+                setVideoImportStatus("IMPORT FAILED: " + (e.getMessage() == null ? "Unknown error" : e.getMessage()));
+            }
+        }).start();
+    }
+
     private void showHome() {
         beginPage("MOBILE DEVELOPMENT ENVIRONMENT");
         LinearLayout hero = column();
@@ -701,7 +862,7 @@ public class MainActivity extends Activity {
         button("LOCAL BUILD CENTER  •  ZIP IMPORT", () -> showLocalBuildCenter());
         button("BUILD CENTER  •  APK OUTPUT", () -> showBuildCenter());
         button("APK SIGNER", () -> showSigner());
-        button("G.I AI ASSISTANT  •  CUSTOM PROVIDERS", () -> showAiAssistant());
+        button("AI VIDEO TRANSLATOR • URL IMPORT", () -> showUrlVideoImport());\n        button("G.I AI ASSISTANT  •  CUSTOM PROVIDERS", () -> showAiAssistant());
         button("PHONE FILE MANAGER  •  READ / WRITE", () -> showPhoneFiles());
         button("PLUGIN MANAGER", () -> showPlugins());
         button("DEVICE & BUILD DIAGNOSTICS", () -> showDiagnostics());
@@ -1827,7 +1988,7 @@ public class MainActivity extends Activity {
                 if (cur != null && cur.moveToFirst()) name = cur.getString(0);
             } catch (Exception ignored) {}
             openPhoneFile(uri, name);
-        } else if (requestCode == PICK_PROJECT_ZIP) {
+        } else if (requestCode == PICK_VIDEO_URL) {\n            importVideoFromPhone(uri);\n            showUrlVideoImport();\n        } else if (requestCode == PICK_PROJECT_ZIP) {
             importProjectZip(uri);
         } else if (requestCode == SAVE_PROJECT_ZIP || requestCode == SAVE_WEB_BUILD) {
             if (pendingExport == null) { toast("Export file is missing."); return; }
