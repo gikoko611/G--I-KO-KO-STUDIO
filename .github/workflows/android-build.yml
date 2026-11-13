@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: openmontage-armv7-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-ffmpeg-armv7:
     runs-on: ubuntu-latest
