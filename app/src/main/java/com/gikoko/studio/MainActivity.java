@@ -32,6 +32,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 
 import com.android.apksig.ApkSigner;
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
+import com.tom_roush.pdfbox.pdmodel.PDDocument;
+import com.tom_roush.pdfbox.text.PDFTextStripper;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -61,9 +64,9 @@ public class MainActivity extends Activity {
     private static final int PICK_VIDEO_URL = 206;
     private static final long MAX_VIDEO_IMPORT_BYTES = 300L * 1024L * 1024L;
 
-    private final int bg = Color.rgb(4, 13, 25);
-    private final int panel = Color.rgb(9, 29, 43);
-    private final int green = Color.rgb(0, 235, 166);
+    private final int bg = Color.rgb(2, 7, 20);
+    private final int panel = Color.rgb(7, 18, 39);
+    private final int green = Color.rgb(0, 235, 210);
     private LinearLayout page;
     private Uri apkUri;
     private Uri keystoreUri;
@@ -78,10 +81,24 @@ public class MainActivity extends Activity {
     private TextView videoImportStatus;
     private volatile boolean videoImportRunning = false;
     private File importedVideoFile;
+    private static final int PICK_PDF_SOURCE = 212;
+    private static final int SAVE_SUBTITLE_FILE = 210;
+    private static final int SAVE_VOICE_FILE = 211;
+    private static final int SAVE_TRIMMED_VIDEO = 213;
+    private static final long MAX_PDF_IMPORT_BYTES = 100L * 1024L * 1024L;
+    private File importedPdfFile;
+    private File extractedTextFile;
+    private File scriptDraftFile;
+    private File pendingSubtitleExport;
+    private File pendingVoiceExport;
+    private File pendingTrimExport;
+    private String extractedPdfText = "";
+    private android.speech.tts.TextToSpeech localTts;
+    private TextView voiceStatus;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().setStatusBarColor(Color.rgb(3, 12, 22));
+        getWindow().setStatusBarColor(Color.rgb(2, 7, 20));
         getWindow().setNavigationBarColor(Color.rgb(3, 12, 22));
         String savedTree = getSharedPreferences("studio_files", MODE_PRIVATE).getString("tree_uri", null);
         if (savedTree != null) {
@@ -97,8 +114,8 @@ public class MainActivity extends Activity {
     private GradientDrawable shape(int color, int stroke) {
         GradientDrawable d = new GradientDrawable(
             GradientDrawable.Orientation.TL_BR,
-            new int[]{color, Color.rgb(7, 42, 52), Color.rgb(5, 19, 32)});
-        d.setCornerRadius(dp(18));
+            new int[]{color, Color.rgb(8, 35, 68), Color.rgb(34, 8, 32)});
+        d.setCornerRadius(dp(16));
         d.setStroke(dp(1), stroke);
         return d;
     }
@@ -187,7 +204,7 @@ public class MainActivity extends Activity {
         e.setHintTextColor(Color.rgb(120, 155, 166));
         e.setTextColor(Color.WHITE);
         e.setPadding(dp(12), 0, dp(12), 0);
-        e.setBackground(shape(panel, Color.rgb(0, 111, 105)));
+        e.setBackground(shape(panel, Color.rgb(0, 190, 255)));
         if (secret) e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         else e.setInputType(InputType.TYPE_CLASS_TEXT);
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(50));
@@ -719,7 +736,7 @@ public class MainActivity extends Activity {
                 "\\nSize: " + (importedVideoFile.length() / (1024 * 1024)) + " MB");
         }
         paragraph("Next step: connect this imported video to the transcription → Gemini Myanmar translation → Burmese voice → subtitle and MP4 export pipeline.");
-        button("BACK TO WORKSPACE", () -> showHome());
+        button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
     }
 
     private void setVideoImportStatus(String message) {
@@ -776,7 +793,7 @@ public class MainActivity extends Activity {
                     if (!videoType && !videoExtension) throw new Exception("This URL did not return a recognizable video file. Try a direct MP4/MOV link or select the video from your phone.");
                     long length = connection.getContentLength();
                     if (length > MAX_VIDEO_IMPORT_BYTES) throw new Exception("Video exceeds the 300 MB import limit.");
-                    File dir = new File(getCacheDir(), "video_imports");
+                    File dir = new File(getFilesDir(), "production/media");
                     if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create import folder.");
                     temp = new File(dir, "gi_video_" + System.currentTimeMillis() + ".mp4");
                     try (InputStream in = new BufferedInputStream(connection.getInputStream());
@@ -838,49 +855,343 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    private void toolCard(String glyph, String title, String detail, int accent, Runnable action) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.HORIZONTAL);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(dp(12), dp(12), dp(12), dp(12));
+        card.setBackground(shape(panel, accent));
+        TextView icon = text(glyph, 27, accent, true);
+        icon.setGravity(Gravity.CENTER);
+        GradientDrawable iconBg = new GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            new int[]{Color.rgb(10, 36, 68), Color.rgb(8, 23, 43)});
+        iconBg.setCornerRadius(dp(14));
+        iconBg.setStroke(dp(1), accent);
+        icon.setBackground(iconBg);
+        card.addView(icon, new LinearLayout.LayoutParams(dp(54), dp(54)));
+        LinearLayout copy = column();
+        copy.setPadding(dp(12), 0, 0, 0);
+        copy.addView(text(title, 14, Color.WHITE, true));
+        TextView description = text(detail, 11, Color.rgb(172, 204, 222), false);
+        LinearLayout.LayoutParams dp2 = new LinearLayout.LayoutParams(-1, -2);
+        dp2.topMargin = dp(4);
+        copy.addView(description, dp2);
+        card.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView arrow = text("›", 28, accent, true);
+        card.addView(arrow);
+        LinearLayout.LayoutParams cp = new LinearLayout.LayoutParams(-1, -2);
+        cp.bottomMargin = dp(10);
+        page.addView(card, cp);
+        card.setOnClickListener(v -> action.run());
+        AlphaAnimation pulse = new AlphaAnimation(.92f, 1f);
+        pulse.setDuration(900);
+        card.startAnimation(pulse);
+    }
+
     private void showHome() {
-        beginPage("MOBILE DEVELOPMENT ENVIRONMENT");
+        beginPage("G.I KO KO • OFFLINE-FIRST CREATIVE STUDIO");
         LinearLayout hero = column();
         hero.setPadding(dp(16), dp(18), dp(16), dp(18));
-        hero.setBackground(shape(panel, green));
-        TextView eyebrow = text("CYBER WORKSPACE  /  VERSION 0.0.1", 10, green, true);
-        hero.addView(eyebrow);
-        TextView title = text("Build. Sign. Extend.", 26, Color.WHITE, true);
+        GradientDrawable heroBg = new GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            new int[]{Color.rgb(5, 20, 48), Color.rgb(4, 48, 54), Color.rgb(43, 10, 32)});
+        heroBg.setCornerRadius(dp(22));
+        heroBg.setStroke(dp(2), Color.rgb(0, 220, 255));
+        hero.setBackground(heroBg);
+        hero.addView(text("G.I KO KO  /  OPENMONTAGE MOBILE", 10, Color.rgb(0, 240, 210), true));
+        TextView title = text("CREATE  •  EDIT  •  EXPORT", 23, Color.WHITE, true);
         LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-1, -2);
-        tp.topMargin = dp(8);
+        tp.topMargin = dp(9);
         hero.addView(title, tp);
-        TextView sub = text("A mobile-first Android development toolkit.", 13,
-            Color.rgb(174, 204, 216), false);
+        TextView sub = text("Offline-first production tools. Internet is optional for AI providers and online media.", 12,
+            Color.rgb(190, 218, 235), false);
         tp = new LinearLayout.LayoutParams(-1, -2);
-        tp.topMargin = dp(8);
+        tp.topMargin = dp(7);
         hero.addView(sub, tp);
+        LinearLayout status = new LinearLayout(this);
+        status.setOrientation(LinearLayout.HORIZONTAL);
+        status.setPadding(0, dp(12), 0, 0);
+        status.addView(text("● OFFLINE CORE READY", 10, Color.rgb(0, 255, 160), true),
+            new LinearLayout.LayoutParams(0, -2, 1));
+        status.addView(text("● AI ONLINE OPTIONAL", 10, Color.rgb(0, 205, 255), true));
+        hero.addView(status);
         page.addView(hero);
 
-        heading("WORKSPACE");
-        button("PROJECT EXPLORER", () -> showProjectExplorer());
-        button("CODE EDITOR", () -> showEditorInfo());
-        button("LOCAL BUILD CENTER  •  ZIP IMPORT", () -> showLocalBuildCenter());
-        button("BUILD CENTER  •  APK OUTPUT", () -> showBuildCenter());
-        button("APK SIGNER", () -> showSigner());
-        button("AI VIDEO TRANSLATOR • URL IMPORT", () -> showUrlVideoImport());
-        button("G.I AI ASSISTANT  •  CUSTOM PROVIDERS", () -> showAiAssistant());
-        button("PHONE FILE MANAGER  •  READ / WRITE", () -> showPhoneFiles());
-        button("PLUGIN MANAGER", () -> showPlugins());
-        button("DEVICE & BUILD DIAGNOSTICS", () -> showDiagnostics());
-        button("SETTINGS & ABOUT", () -> showAbout());
+        heading("🎬  VIDEO PRODUCTION");
+        toolCard("🎞️", "OPEN VIDEO STUDIO", "PDF • script • voice • subtitles • clip tools", Color.rgb(0, 235, 210), () -> showVideoStudio());
+        toolCard("📁", "LOCAL MEDIA IMPORT", "Import video files from phone storage", Color.rgb(0, 190, 255), () -> showUrlVideoImport());
+        toolCard("📝", "SUBTITLE LAB", "Create and export SRT subtitle files offline", Color.rgb(150, 255, 70), () -> showSubtitleStudio());
+        toolCard("🎙️", "OFFLINE VOICE STUDIO", "Use the Android speech engine; no API key", Color.rgb(255, 65, 105), () -> showVoiceStudio());
 
-        TextView footer = text("G I KO KO STUDIO  •  ANDROID 6+  •  ARMV7 COMPATIBILITY TARGET",
-            10, Color.rgb(116, 164, 173), true);
+        heading("🧰  EXISTING WORKSPACE TOOLS");
+        toolCard("🗂️", "PROJECT EXPLORER", "Import and browse ZIP projects", Color.rgb(0, 190, 255), () -> showProjectExplorer());
+        toolCard("⌨️", "CODE EDITOR", "Edit text files inside imported projects", Color.rgb(0, 235, 210), () -> showEditorInfo());
+        toolCard("📦", "LOCAL BUILD CENTER", "ZIP import, offline web preview and export", Color.rgb(150, 255, 70), () -> showLocalBuildCenter());
+        toolCard("☁️", "ONLINE BUILD CENTER", "GitHub Actions build and APK artifacts", Color.rgb(255, 65, 105), () -> showBuildCenter());
+        toolCard("🔏", "APK SIGNER", "Sign APK with your own keystore", Color.rgb(0, 190, 255), () -> showSigner());
+        toolCard("🤖", "G.I AI ASSISTANT", "Optional custom AI providers and model settings", Color.rgb(0, 235, 210), () -> showAiAssistant());
+        toolCard("🧩", "PLUGIN MANAGER", "Import, validate and manage safe plugin manifests", Color.rgb(150, 255, 70), () -> showPlugins());
+        toolCard("📱", "PHONE FILE MANAGER", "Read and write files in folders you grant", Color.rgb(255, 65, 105), () -> showPhoneFiles());
+        toolCard("🛠️", "DEVICE DIAGNOSTICS", "Build and compatibility information", Color.rgb(0, 190, 255), () -> showDiagnostics());
+        toolCard("⚙️", "SETTINGS & ABOUT", "App information and signing guidance", Color.rgb(0, 235, 210), () -> showAbout());
+
+        TextView footer = text("G I KO KO STUDIO  •  ANDROID 6+  •  ARMV7 TARGET  •  POWERED BY I KO KO",
+            9, Color.rgb(128, 183, 202), true);
         footer.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(-1, dp(52));
-        fp.topMargin = dp(10);
+        LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(-1, dp(48));
+        fp.topMargin = dp(8);
         page.addView(footer, fp);
+    }
 
-        AlphaAnimation anim = new AlphaAnimation(.72f, 1f);
-        anim.setDuration(1400);
-        anim.setRepeatMode(AlphaAnimation.REVERSE);
-        anim.setRepeatCount(AlphaAnimation.INFINITE);
-        hero.startAnimation(anim);
+    private void showVideoStudio() {
+        beginPage("OPENMONTAGE MOBILE • PRODUCTION");
+        heading("🎬  PRODUCTION CONTROL ROOM");
+        paragraph("Local-first workflow: import a source PDF, prepare a script, create subtitles, synthesize narration with the phone's installed speech engine, then inspect and assemble your media. AI image/video generation and online research remain optional because this phone has limited RAM and no local GPU.");
+        toolCard("📕", "PDF SOURCE • LOCAL IMPORT", "Extract PDF text on-device for script preparation", Color.rgb(0, 190, 255), () -> pickPdfSource());
+        toolCard("✍️", "SCRIPT WORKSPACE", "Edit and save narration drafts locally", Color.rgb(0, 235, 210), () -> showScriptStudio());
+        toolCard("🎙️", "VOICEOVER • OFFLINE TTS", "Generate speech using installed Android TTS voices", Color.rgb(255, 65, 105), () -> showVoiceStudio());
+        toolCard("💬", "SUBTITLE WORKSPACE", "Write, time and export SRT subtitles", Color.rgb(150, 255, 70), () -> showSubtitleStudio());
+        toolCard("🎥", "VIDEO CLIP WORKSPACE", "Import and inspect local video assets", Color.rgb(0, 190, 255), () -> showVideoTools());
+        toolCard("🌐", "OPTIONAL AI PROVIDERS", "Connect a provider only when you need AI generation", Color.rgb(255, 65, 105), () -> showAiAssistant());
+        toolCard("🧰", "LOCAL PROJECT FILES", "Browse the saved production workspace", Color.rgb(0, 235, 210), () -> showPhoneFiles());
+        button("BACK TO HOME", () -> showHome());
+    }
+
+    private void pickPdfSource() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("application/pdf");
+        i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(i, PICK_PDF_SOURCE);
+    }
+
+    private void importPdfSource(Uri uri) {
+        new Thread(() -> {
+            File target = null;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new Exception("Cannot open PDF source.");
+                File dir = new File(getFilesDir(), "production/source");
+                if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create source folder.");
+                target = new File(dir, "source_book.pdf");
+                try (OutputStream out = new FileOutputStream(target)) {
+                    byte[] buf = new byte[16384]; int n; long total = 0;
+                    while ((n = in.read(buf)) != -1) {
+                        total += n;
+                        if (total > MAX_PDF_IMPORT_BYTES) throw new Exception("PDF exceeds 100 MB import limit.");
+                        out.write(buf, 0, n);
+                    }
+                }
+                PDFBoxResourceLoader.init(getApplicationContext());
+                String textContent;
+                int pages;
+                try (PDDocument doc = PDDocument.load(target)) {
+                    pages = doc.getNumberOfPages();
+                    textContent = new PDFTextStripper().getText(doc);
+                }
+                if (textContent == null || textContent.trim().isEmpty()) throw new Exception("No selectable text found. Scanned PDFs need OCR, which is not included in this offline build.");
+                File textFile = new File(dir, "source_text.txt");
+                try (FileOutputStream out = new FileOutputStream(textFile)) {
+                    out.write(textContent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                importedPdfFile = target;
+                extractedTextFile = textFile;
+                extractedPdfText = textContent;
+                runOnUiThread(() -> {
+                    toast("PDF imported and text extracted locally • " + pages + " pages");
+                    showPdfWorkspace(pages);
+                });
+            } catch (Exception e) {
+                String message = e.getMessage() == null ? "PDF import failed" : e.getMessage();
+                runOnUiThread(() -> toast("PDF import failed: " + message));
+            }
+        }).start();
+    }
+
+    private void showPdfWorkspace(int pages) {
+        beginPage("PDF SOURCE • LOCAL EXTRACTION");
+        heading("📕  SOURCE READY");
+        paragraph("File: " + (importedPdfFile == null ? "PDF" : importedPdfFile.getName()) +
+            "\nPages: " + pages + "\nExtracted text: " + (extractedPdfText == null ? 0 : extractedPdfText.length()) + " characters\nSaved locally in app storage.");
+        button("OPEN EXTRACTED TEXT / SCRIPT", () -> showScriptStudio());
+        button("IMPORT ANOTHER PDF", () -> pickPdfSource());
+        button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
+    }
+
+    private void showScriptStudio() {
+        beginPage("SCRIPT WORKSPACE • OFFLINE");
+        heading("✍️  NARRATION SCRIPT");
+        paragraph("PDF text is extracted locally. Edit or shorten it into a narration script. For AI summarization or translation, open the optional AI Assistant separately.");
+        EditText editor = new EditText(this);
+        editor.setTextColor(Color.WHITE);
+        editor.setHintTextColor(Color.rgb(125, 160, 180));
+        editor.setTextSize(13);
+        editor.setGravity(Gravity.TOP | Gravity.START);
+        editor.setMinLines(12);
+        editor.setPadding(dp(12), dp(12), dp(12), dp(12));
+        editor.setBackground(shape(panel, Color.rgb(0, 190, 255)));
+        String initial = extractedPdfText == null ? "" : extractedPdfText;
+        if (initial.length() > 60000) initial = initial.substring(0, 60000);
+        if (scriptDraftFile != null && scriptDraftFile.isFile()) {
+            try { initial = new String(java.nio.file.Files.readAllBytes(scriptDraftFile.toPath()), java.nio.charset.StandardCharsets.UTF_8); } catch (Exception ignored) {}
+        }
+        editor.setText(initial);
+        page.addView(editor, new LinearLayout.LayoutParams(-1, dp(310)));
+        button("SAVE SCRIPT TO LOCAL PROJECT", () -> {
+            try {
+                File dir = new File(getFilesDir(), "production/script");
+                if (!dir.exists()) dir.mkdirs();
+                scriptDraftFile = new File(dir, "narration_script.txt");
+                try (FileOutputStream out = new FileOutputStream(scriptDraftFile)) {
+                    out.write(editor.getText().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                toast("Script saved locally.");
+            } catch (Exception e) { toast("Save failed: " + e.getMessage()); }
+        });
+        button("OPEN OFFLINE VOICE STUDIO", () -> showVoiceStudio());
+        button("OPEN SUBTITLE LAB", () -> showSubtitleStudio());
+        button("OPTIONAL AI ASSISTANT", () -> showAiAssistant());
+        button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
+    }
+
+    private void showSubtitleStudio() {
+        beginPage("SUBTITLE LAB • OFFLINE");
+        heading("💬  SRT SUBTITLE EDITOR");
+        paragraph("Create or paste SubRip (.srt) subtitles. The draft is stored locally; no account or API is needed. Use standard SRT numbering and HH:MM:SS,mmm timestamps.");
+        EditText editor = new EditText(this);
+        editor.setTextColor(Color.WHITE);
+        editor.setHintTextColor(Color.rgb(125, 160, 180));
+        editor.setTextSize(12);
+        editor.setGravity(Gravity.TOP | Gravity.START);
+        editor.setMinLines(12);
+        editor.setPadding(dp(12), dp(12), dp(12), dp(12));
+        editor.setBackground(shape(panel, Color.rgb(150, 255, 70)));
+        String starter = "1\n00:00:00,000 --> 00:00:04,000\nYour subtitle text here\n\n2\n00:00:04,000 --> 00:00:08,000\nNext subtitle line\n";
+        editor.setText(starter);
+        page.addView(editor, new LinearLayout.LayoutParams(-1, dp(300)));
+        button("SAVE SRT LOCALLY", () -> {
+            try {
+                File dir = new File(getFilesDir(), "production/subtitles");
+                if (!dir.exists()) dir.mkdirs();
+                pendingSubtitleExport = new File(dir, "myanmar_subtitles.srt");
+                try (FileOutputStream out = new FileOutputStream(pendingSubtitleExport)) {
+                    out.write(editor.getText().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                }
+                toast("SRT saved locally.");
+            } catch (Exception e) { toast("SRT save failed: " + e.getMessage()); }
+        });
+        button("EXPORT SRT TO PHONE", () -> {
+            if (pendingSubtitleExport == null || !pendingSubtitleExport.isFile()) {
+                toast("Save the SRT locally first."); return;
+            }
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("application/x-subrip");
+            i.putExtra(Intent.EXTRA_TITLE, "myanmar_subtitles.srt");
+            startActivityForResult(i, SAVE_SUBTITLE_FILE);
+        });
+        button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
+    }
+
+    private void showVoiceStudio() {
+        beginPage("VOICE STUDIO • LOCAL TTS");
+        heading("🎙️  OFFLINE NARRATION");
+        paragraph("Uses the Android Text-to-Speech engine already installed on the phone. English voice availability depends on downloaded system voice data. Burmese TTS may not be installed on this device.");
+        EditText script = new EditText(this);
+        script.setTextColor(Color.WHITE);
+        script.setHintTextColor(Color.rgb(125, 160, 180));
+        script.setTextSize(13);
+        script.setGravity(Gravity.TOP | Gravity.START);
+        script.setMinLines(8);
+        script.setPadding(dp(12), dp(12), dp(12), dp(12));
+        script.setBackground(shape(panel, Color.rgb(255, 65, 105)));
+        if (scriptDraftFile != null && scriptDraftFile.isFile()) {
+            try { script.setText(new String(java.nio.file.Files.readAllBytes(scriptDraftFile.toPath()), java.nio.charset.StandardCharsets.UTF_8)); } catch (Exception ignored) {}
+        } else if (extractedPdfText != null) {
+            String t = extractedPdfText;
+            script.setText(t.length() > 12000 ? t.substring(0, 12000) : t);
+        }
+        page.addView(script, new LinearLayout.LayoutParams(-1, dp(240)));
+        voiceStatus = text("STATUS: Ready for local speech synthesis.", 11, Color.rgb(0, 235, 210), true);
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, -2);
+        sp.topMargin = dp(10);
+        sp.bottomMargin = dp(10);
+        page.addView(voiceStatus, sp);
+        button("GENERATE ENGLISH VOICEOVER", () -> {
+            String value = script.getText().toString().trim();
+            if (value.isEmpty()) { toast("Enter narration text first."); return; }
+            if (value.length() > 30000) { toast("Split narration into shorter parts (30,000 characters max per export)."); return; }
+            File dir = new File(getFilesDir(), "production/voice");
+            if (!dir.exists()) dir.mkdirs();
+            pendingVoiceExport = new File(dir, "english_voiceover.wav");
+            voiceStatus.setText("STATUS: Starting Android TTS…");
+            if (localTts != null) { try { localTts.shutdown(); } catch (Exception ignored) {} }
+            localTts = new android.speech.tts.TextToSpeech(this, status -> {
+                if (status != android.speech.tts.TextToSpeech.SUCCESS) {
+                    runOnUiThread(() -> voiceStatus.setText("ERROR: Android TTS engine is unavailable."));
+                    return;
+                }
+                int language = localTts.setLanguage(java.util.Locale.US);
+                if (language == android.speech.tts.TextToSpeech.LANG_MISSING_DATA ||
+                    language == android.speech.tts.TextToSpeech.LANG_NOT_SUPPORTED) {
+                    runOnUiThread(() -> voiceStatus.setText("ERROR: Install an English voice in Android Text-to-Speech settings."));
+                    return;
+                }
+                localTts.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
+                    @Override public void onStart(String id) {}
+                    @Override public void onDone(String id) {
+                        runOnUiThread(() -> {
+                            if (voiceStatus != null) voiceStatus.setText("SUCCESS: Offline voice saved • " + pendingVoiceExport.getAbsolutePath());
+                            toast("Voiceover generated locally.");
+                        });
+                    }
+                    @Override public void onError(String id) {
+                        runOnUiThread(() -> { if (voiceStatus != null) voiceStatus.setText("ERROR: TTS synthesis failed."); });
+                    }
+                });
+                int result = localTts.synthesizeToFile(value, new android.os.Bundle(), pendingVoiceExport, "gikoko_voice");
+                if (result != android.speech.tts.TextToSpeech.SUCCESS) {
+                    runOnUiThread(() -> voiceStatus.setText("ERROR: Could not start speech synthesis."));
+                } else {
+                    runOnUiThread(() -> voiceStatus.setText("STATUS: Synthesizing voice offline…"));
+                }
+            });
+        });
+        button("EXPORT VOICEOVER TO PHONE", () -> {
+            if (pendingVoiceExport == null || !pendingVoiceExport.isFile()) { toast("Generate voiceover first."); return; }
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("audio/wav");
+            i.putExtra(Intent.EXTRA_TITLE, "english_voiceover.wav");
+            startActivityForResult(i, SAVE_VOICE_FILE);
+        });
+        button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
+    }
+
+    private void showVideoTools() {
+        beginPage("VIDEO CLIP WORKSPACE • OFFLINE");
+        heading("🎥  LOCAL VIDEO ASSETS");
+        paragraph("Import a local clip for inspection. This first offline build keeps the original file untouched; codec-safe trim and multi-track rendering will be added only after device/build validation.");
+        if (importedVideoFile != null && importedVideoFile.isFile()) {
+            try {
+                android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever();
+                retriever.setDataSource(importedVideoFile.getAbsolutePath());
+                String duration = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+                String width = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
+                String height = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
+                String rotation = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+                retriever.release();
+                heading("CLIP INSPECTOR");
+                paragraph("File: " + importedVideoFile.getName() + "\nSize: " + formatBytes(importedVideoFile.length()) +
+                    "\nDuration: " + (duration == null ? "Unknown" : duration + " ms") +
+                    "\nResolution: " + (width == null ? "?" : width) + " × " + (height == null ? "?" : height) +
+                    "\nRotation: " + (rotation == null ? "0" : rotation) + "°");
+            } catch (Exception e) { paragraph("Clip imported. Metadata unavailable: " + e.getMessage()); }
+        } else {
+            paragraph("No local video imported yet.");
+        }
+        button("IMPORT VIDEO FROM PHONE / URL", () -> showUrlVideoImport());
+        button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
     }
 
     private void showProjectExplorer() {
@@ -1942,7 +2253,7 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void toast(String message) {
+    @Override protected void onDestroy() {\n        if (localTts != null) { try { localTts.stop(); localTts.shutdown(); } catch (Exception ignored) {} }\n        super.onDestroy();\n    }\n\n    private void toast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
@@ -1950,7 +2261,18 @@ public class MainActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (resultCode != RESULT_OK || data == null) return;
         Uri uri = data.getData();
-        if (requestCode == PICK_APK) {
+        if (requestCode == PICK_PDF_SOURCE) {
+            importPdfSource(uri);
+        } else if (requestCode == SAVE_SUBTITLE_FILE || requestCode == SAVE_VOICE_FILE) {
+            File source = requestCode == SAVE_SUBTITLE_FILE ? pendingSubtitleExport : pendingVoiceExport;
+            try (InputStream in = new FileInputStream(source);
+                 OutputStream out = getContentResolver().openOutputStream(uri)) {
+                if (source == null || !source.isFile() || out == null) throw new Exception("Export source or destination is missing.");
+                byte[] buffer = new byte[8192]; int n;
+                while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
+                toast(requestCode == SAVE_SUBTITLE_FILE ? "SRT exported to phone." : "Voiceover exported to phone.");
+            } catch (Exception e) { toast("Export failed: " + e.getMessage()); }
+        } else if (requestCode == PICK_APK) {
             apkUri = uri;
             if (signerStatus != null) signerStatus.setText("APK selected. Now select your keystore.");
             toast("APK selected.");
