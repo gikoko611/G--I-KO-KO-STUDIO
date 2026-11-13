@@ -39,6 +39,9 @@ import com.android.apksig.ApkSigner;
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
 import com.tom_roush.pdfbox.pdmodel.PDDocument;
 import com.tom_roush.pdfbox.text.PDFTextStripper;
+import com.arthenica.ffmpegkit.FFmpegKit;
+import com.arthenica.ffmpegkit.FFmpegSession;
+import com.arthenica.ffmpegkit.ReturnCode;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -89,6 +92,8 @@ public class MainActivity extends Activity {
     private static final int SAVE_SUBTITLE_FILE = 210;
     private static final int SAVE_VOICE_FILE = 211;
     private static final int SAVE_TRIMMED_VIDEO = 213;
+    private static final int PICK_VOICE_TRACK = 214;
+    private static final int PICK_MUSIC_TRACK = 215;
     private static final long MAX_PDF_IMPORT_BYTES = 100L * 1024L * 1024L;
     private File importedPdfFile;
     private File extractedTextFile;
@@ -101,6 +106,10 @@ public class MainActivity extends Activity {
     private String extractedPdfText = "";
     private android.speech.tts.TextToSpeech localTts;
     private TextView voiceStatus;
+    private File importedVoiceTrack;
+    private File importedMusicTrack;
+    private EditText voiceMixVolumeInput;
+    private EditText musicMixVolumeInput;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -1096,6 +1105,7 @@ public class MainActivity extends Activity {
             i.putExtra(Intent.EXTRA_TITLE, "myanmar_subtitles.srt");
             startActivityForResult(i, SAVE_SUBTITLE_FILE);
         });
+        button("🔥 BURN SUBTITLES INTO VIDEO", () -> burnSubtitlesIntoVideo());
         button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
     }
 
@@ -1230,7 +1240,7 @@ public class MainActivity extends Activity {
             startActivityForResult(save, SAVE_TRIMMED_VIDEO);
         });
         button("💬 OPEN SUBTITLE TRACK", () -> showSubtitleStudio());
-        button("🎚️ AUDIO TRACK / MIXING", () -> showAudioMixingInfo());
+        button("🎚️ AUDIO TRACK / MIXING", () -> showAudioMixingStudio());
         button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
     }
 
@@ -1409,11 +1419,152 @@ public class MainActivity extends Activity {
         button("BACK TO VIDEO EDITOR", () -> showVideoTools());
     }
 
-    private void showAudioMixingInfo() {
-        beginPage("AUDIO MIXER • LOCAL TRACK");
-        heading("🎚️  AUDIO MIXING");
-        paragraph("Audio track planning is saved as part of the local timeline design, but this build does not yet mix, normalize, or encode multiple audio streams. A real offline mixer needs decode + resample + mix + encode, then mux with the video; this is the next rendering-engine stage.");
+    private void showAudioMixingStudio() {
+        beginPage("AUDIO MIXER • OFFLINE FFMPEG");
+        heading("🎚️  MULTI-TRACK AUDIO MIXER");
+        paragraph("Mix the source video's original audio with a voiceover and background music. All processing runs locally through the ARMv7 FFmpeg engine.");
+        paragraph("VOICEOVER: " + (importedVoiceTrack == null ? "Not selected" : importedVoiceTrack.getName()));
+        button("🎙️ SELECT VOICEOVER FILE", () -> pickAudioTrack(PICK_VOICE_TRACK));
+        paragraph("BACKGROUND MUSIC: " + (importedMusicTrack == null ? "Not selected" : importedMusicTrack.getName()));
+        button("🎵 SELECT BACKGROUND MUSIC", () -> pickAudioTrack(PICK_MUSIC_TRACK));
+        voiceMixVolumeInput = field("Voiceover volume (0.0 – 2.0)", false);
+        voiceMixVolumeInput.setText("1.0");
+        musicMixVolumeInput = field("Music volume (0.0 – 2.0)", false);
+        musicMixVolumeInput.setText("0.20");
+        button("🎚️ MIX AUDIO + EXPORT MP4", () -> mixAudioIntoVideo());
         button("BACK TO VIDEO EDITOR", () -> showVideoTools());
+    }
+
+    private void pickAudioTrack(int requestCode) {
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        pick.addCategory(Intent.CATEGORY_OPENABLE);
+        pick.setType("audio/*");
+        pick.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+        startActivityForResult(pick, requestCode);
+    }
+
+    private void importAudioTrack(Uri uri, boolean voice) {
+        new Thread(() -> {
+            File target = null;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new Exception("Cannot open audio file.");
+                File dir = new File(getFilesDir(), "production/audio");
+                if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create audio folder.");
+                target = new File(dir, (voice ? "voice_" : "music_") + System.currentTimeMillis() + ".audio");
+                try (OutputStream out = new FileOutputStream(target)) {
+                    byte[] buffer = new byte[16384]; int n; long total = 0;
+                    while ((n = in.read(buffer)) != -1) {
+                        total += n;
+                        if (total > 200L * 1024L * 1024L) throw new Exception("Audio file exceeds the 200 MB import limit.");
+                        out.write(buffer, 0, n);
+                    }
+                }
+                if (target.length() < 512) throw new Exception("Audio file is empty.");
+                File imported = target;
+                runOnUiThread(() -> {
+                    if (voice) importedVoiceTrack = imported; else importedMusicTrack = imported;
+                    toast((voice ? "Voiceover" : "Music") + " imported locally.");
+                    showAudioMixingStudio();
+                });
+            } catch (Exception e) {
+                if (target != null && target.exists()) target.delete();
+                String message = e.getMessage() == null ? "Audio import failed." : e.getMessage();
+                runOnUiThread(() -> toast(message));
+            }
+        }).start();
+    }
+
+    private boolean sourceHasAudio(File source) {
+        MediaExtractor extractor = new MediaExtractor();
+        try {
+            extractor.setDataSource(source.getAbsolutePath());
+            for (int i = 0; i < extractor.getTrackCount(); i++) {
+                String mime = extractor.getTrackFormat(i).getString(MediaFormat.KEY_MIME);
+                if (mime != null && mime.startsWith("audio/")) return true;
+            }
+        } catch (Exception ignored) {
+        } finally { try { extractor.release(); } catch (Exception ignored) {} }
+        return false;
+    }
+
+    private float readVolume(EditText input, float fallback) {
+        try {
+            float value = Float.parseFloat(input.getText().toString().trim());
+            return Math.max(0f, Math.min(2f, value));
+        } catch (Exception e) { return fallback; }
+    }
+
+    private void mixAudioIntoVideo() {
+        if (importedVideoFile == null || !importedVideoFile.isFile()) { toast("Import a video first."); return; }
+        if (importedVoiceTrack == null || !importedVoiceTrack.isFile() ||
+            importedMusicTrack == null || !importedMusicTrack.isFile()) {
+            toast("Select both voiceover and background music files first."); return;
+        }
+        float voice = readVolume(voiceMixVolumeInput, 1f);
+        float music = readVolume(musicMixVolumeInput, .2f);
+        boolean originalAudio = sourceHasAudio(importedVideoFile);
+        String filter;
+        if (originalAudio) {
+            filter = "[0:a:0]volume=1.0[original];[1:a:0]volume=" + voice + "[voice];" +
+                "[2:a:0]volume=" + music + "[music];[original][voice][music]" +
+                "amix=inputs=3:duration=longest:dropout_transition=2[aout]";
+        } else {
+            filter = "[1:a:0]volume=" + voice + "[voice];[2:a:0]volume=" + music +
+                "[music];[voice][music]amix=inputs=2:duration=longest:dropout_transition=2[aout]";
+        }
+        File dir = new File(getFilesDir(), "production/exports");
+        if (!dir.exists()) dir.mkdirs();
+        File output = new File(dir, "audio_mix_" + System.currentTimeMillis() + ".mp4");
+        String[] args = {"-y", "-i", importedVideoFile.getAbsolutePath(),
+            "-i", importedVoiceTrack.getAbsolutePath(), "-i", importedMusicTrack.getAbsolutePath(),
+            "-filter_complex", filter, "-map", "0:v:0", "-map", "[aout]",
+            "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart",
+            output.getAbsolutePath()};
+        runFfmpegExport("Audio mix", args, output, "Audio mix");
+    }
+
+    private void burnSubtitlesIntoVideo() {
+        if (importedVideoFile == null || !importedVideoFile.isFile()) {
+            toast("Import a video before burning subtitles."); return;
+        }
+        if (pendingSubtitleExport == null || !pendingSubtitleExport.isFile()) {
+            toast("Save your SRT file in Subtitle Lab first."); return;
+        }
+        File dir = new File(getFilesDir(), "production/exports");
+        if (!dir.exists()) dir.mkdirs();
+        File output = new File(dir, "subtitle_burn_" + System.currentTimeMillis() + ".mp4");
+        String subtitleFilter = "subtitles=filename='" + escapeFilterPath(pendingSubtitleExport.getAbsolutePath()) +
+            "':fontsdir='/system/fonts':force_style='FontName=Noto Sans Myanmar,FontSize=22,Outline=2,Shadow=1,Alignment=2,MarginV=30'";
+        String[] args = {"-y", "-i", importedVideoFile.getAbsolutePath(),
+            "-vf", subtitleFilter, "-c:v", "mpeg4", "-q:v", "4", "-c:a", "copy",
+            "-pix_fmt", "yuv420p", "-movflags", "+faststart", output.getAbsolutePath()};
+        runFfmpegExport("Subtitle burn-in", args, output, "Subtitle burn-in");
+    }
+
+    private String escapeFilterPath(String path) {
+        return path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'");
+    }
+
+    private void runFfmpegExport(String label, String[] args, File output, String timelineLabel) {
+        toast(label + " started. Keep the app open; processing is offline.");
+        FFmpegKit.executeWithArgumentsAsync(args, session -> {
+            if (ReturnCode.isSuccess(session.getReturnCode()) && output.isFile() && output.length() > 1024) {
+                pendingTrimExport = output;
+                try {
+                    addTimelineItem(output, 0, getVideoDurationMs(output), timelineLabel);
+                } catch (Exception ignored) {}
+                runOnUiThread(() -> {
+                    toast(label + " complete: " + output.getName());
+                    showVideoTools();
+                });
+            } else {
+                String details = session.getFailStackTrace();
+                if (details == null || details.trim().isEmpty()) details = session.getAllLogsAsString();
+                final String error = details == null || details.trim().isEmpty() ? "FFmpeg returned " +
+                    session.getReturnCode() : details.substring(0, Math.min(420, details.length()));
+                runOnUiThread(() -> toast(label + " failed: " + error));
+            }
+        });
     }
 
     private void showProjectExplorer() {
@@ -2499,6 +2650,8 @@ public class MainActivity extends Activity {
                 while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
                 toast(requestCode == SAVE_SUBTITLE_FILE ? "SRT exported to phone." : "Voiceover exported to phone.");
             } catch (Exception e) { toast("Export failed: " + e.getMessage()); }
+        } else if (requestCode == PICK_VOICE_TRACK || requestCode == PICK_MUSIC_TRACK) {
+            importAudioTrack(uri, requestCode == PICK_VOICE_TRACK);
         } else if (requestCode == SAVE_TRIMMED_VIDEO) {
             if (pendingTrimExport == null || !pendingTrimExport.isFile()) { toast("Edited video file is missing."); return; }
             try (InputStream in = new FileInputStream(pendingTrimExport);
