@@ -1221,6 +1221,14 @@ public class MainActivity extends Activity {
             } catch (Exception e) { toast("Timeline save failed: " + e.getMessage()); }
         });
         button("🎞️ OPEN TIMELINE", () -> showTimeline());
+        button("📤 EXPORT LAST EDIT TO PHONE", () -> {
+            if (pendingTrimExport == null || !pendingTrimExport.isFile()) { toast("Create a trimmed or split clip first."); return; }
+            Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            save.addCategory(Intent.CATEGORY_OPENABLE);
+            save.setType("video/mp4");
+            save.putExtra(Intent.EXTRA_TITLE, pendingTrimExport.getName());
+            startActivityForResult(save, SAVE_TRIMMED_VIDEO);
+        });
         button("💬 OPEN SUBTITLE TRACK", () -> showSubtitleStudio());
         button("🎚️ AUDIO TRACK / MIXING", () -> showAudioMixingInfo());
         button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
@@ -1254,6 +1262,7 @@ public class MainActivity extends Activity {
         new Thread(() -> {
             try {
                 File output = task.run();
+                pendingTrimExport = output;
                 runOnUiThread(() -> {
                     toast(label + " exported: " + output.getName());
                     showVideoTools();
@@ -1279,15 +1288,19 @@ public class MainActivity extends Activity {
             int[] trackMap = new int[trackCount];
             java.util.Arrays.fill(trackMap, -1);
             muxer = new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+            int muxerTrackCount = 0;
+            boolean hasVideoTrack = false;
             for (int i = 0; i < trackCount; i++) {
                 MediaFormat format = extractor.getTrackFormat(i);
                 String mime = format.getString(MediaFormat.KEY_MIME);
                 if (mime != null && (mime.startsWith("video/") || mime.startsWith("audio/"))) {
                     trackMap[i] = muxer.addTrack(format);
                     extractor.selectTrack(i);
+                    muxerTrackCount++;
+                    if (mime.startsWith("video/")) hasVideoTrack = true;
                 }
             }
-            if (muxer == null) throw new Exception("No supported audio/video tracks found.");
+            if (muxerTrackCount == 0 || !hasVideoTrack) throw new Exception("No supported video track found in this file.");
             try {
                 android.media.MediaMetadataRetriever meta = new android.media.MediaMetadataRetriever();
                 meta.setDataSource(source.getAbsolutePath());
@@ -2486,6 +2499,15 @@ public class MainActivity extends Activity {
                 while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
                 toast(requestCode == SAVE_SUBTITLE_FILE ? "SRT exported to phone." : "Voiceover exported to phone.");
             } catch (Exception e) { toast("Export failed: " + e.getMessage()); }
+        } else if (requestCode == SAVE_TRIMMED_VIDEO) {
+            if (pendingTrimExport == null || !pendingTrimExport.isFile()) { toast("Edited video file is missing."); return; }
+            try (InputStream in = new FileInputStream(pendingTrimExport);
+                 OutputStream out = getContentResolver().openOutputStream(uri)) {
+                if (out == null) throw new Exception("Cannot open destination.");
+                byte[] buffer = new byte[32768]; int n;
+                while ((n = in.read(buffer)) != -1) out.write(buffer, 0, n);
+                toast("Edited MP4 saved to phone.");
+            } catch (Exception e) { toast("Video export failed: " + e.getMessage()); }
         } else if (requestCode == PICK_APK) {
             apkUri = uri;
             if (signerStatus != null) signerStatus.setText("APK selected. Now select your keystore.");
