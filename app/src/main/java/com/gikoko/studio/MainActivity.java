@@ -2253,7 +2253,12 @@ public class MainActivity extends Activity {
         }
     }
 
-    @Override protected void onDestroy() {\n        if (localTts != null) { try { localTts.stop(); localTts.shutdown(); } catch (Exception ignored) {} }\n        super.onDestroy();\n    }\n\n    private void toast(String message) {
+    @Override protected void onDestroy() {
+        if (localTts != null) { try { localTts.stop(); localTts.shutdown(); } catch (Exception ignored) {} }
+        super.onDestroy();
+    }
+
+    private void toast(String message) {
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
     }
 
