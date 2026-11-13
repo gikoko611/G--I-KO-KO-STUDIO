@@ -49,7 +49,7 @@ jobs:
         working-directory: ffmpegkit-src/android-8.1-lts
         run: |
           set -eu
-          ./android.sh --lts --enable-libass --enable-android-media-codec --enable-android-zlib --disable-arm64-v8a --disable-x86 --disable-x86-64 --api-level=23
+          ./android.sh --lts --enable-libass --enable-android-media-codec --enable-android-zlib --disable-arm-v7a --disable-arm64-v8a --disable-x86 --disable-x86-64 --api-level=23
           test -s prebuilt/bundle-android-aar/ffmpeg-kit/ffmpeg-kit.aar
           ls -lh prebuilt/bundle-android-aar/ffmpeg-kit/ffmpeg-kit.aar
       - name: Print FFmpegKit build diagnostics
