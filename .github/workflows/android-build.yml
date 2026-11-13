@@ -9,7 +9,55 @@ permissions:
   contents: read
 
 jobs:
+  build-ffmpeg-armv7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      ANDROID_HOME: /usr/local/lib/android/sdk
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+    steps:
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install FFmpeg build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake libtool pkg-config curl git build-essential yasm nasm gperf texinfo bison ragel python3 python3-pip unzip zip wget meson ninja-build doxygen cmake autogen autopoint groff gtk-doc-tools libtasn1-bin
+      - name: Install Android NDK r27c
+        shell: bash
+        run: |
+          set -eu
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/16.0/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -perm -u+x | sort | tail -n 1)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Checkout pinned FFmpegKit source
+        run: |
+          git clone https://github.com/ffmpegkit-maintained/ffmpeg.git ffmpegkit-src
+          git -C ffmpegkit-src checkout c72e151c1ba5bd6ce602a1dfd5eae402095bae86
+      - name: Build FFmpegKit for armeabi-v7a only
+        working-directory: ffmpegkit-src/android-8.1-lts
+        run: |
+          set -eu
+          ./android.sh --lts --full --enable-android-media-codec --enable-android-zlib --disable-lib-gnutls --disable-arm-v7a-neon --disable-arm64-v8a --disable-x86 --disable-x86-64 --api-level=23
+          test -s prebuilt/bundle-android-aar/ffmpeg-kit/ffmpeg-kit.aar
+          ls -lh prebuilt/bundle-android-aar/ffmpeg-kit/ffmpeg-kit.aar
+      - name: Upload ARMv7 FFmpegKit AAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpegkit-armv7
+          path: ffmpegkit-src/android-8.1-lts/prebuilt/bundle-android-aar/ffmpeg-kit/ffmpeg-kit.aar
+          retention-days: 7
+          if-no-files-found: error
+
   build:
+    needs: build-ffmpeg-armv7
     runs-on: ubuntu-latest
     env:
       ANDROID_HOME: /usr/local/lib/android/sdk
