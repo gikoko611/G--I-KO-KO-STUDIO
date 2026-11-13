@@ -45,6 +45,13 @@ jobs:
         run: |
           git clone https://github.com/ffmpegkit-maintained/ffmpeg.git ffmpegkit-src
           git -C ffmpegkit-src checkout c72e151c1ba5bd6ce602a1dfd5eae402095bae86
+      - name: Enable NEON in FFmpegKit NDK application config
+        working-directory: ffmpegkit-src/android-8.1-lts
+        run: |
+          set -eu
+          grep -Fq 'APP_ABI := ${ANDROID_ARCHITECTURES}' scripts/function-android.sh
+          sed -i '/APP_ABI := ${ANDROID_ARCHITECTURES}/a APP_ARM_NEON := true' scripts/function-android.sh
+          grep -A1 -F 'APP_ABI := ${ANDROID_ARCHITECTURES}' scripts/function-android.sh
       - name: Build FFmpegKit for armeabi-v7a only
         working-directory: ffmpegkit-src/android-8.1-lts
         run: |
