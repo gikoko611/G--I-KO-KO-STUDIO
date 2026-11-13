@@ -30,6 +30,10 @@ import java.util.zip.ZipOutputStream;
 import java.io.BufferedInputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import android.media.MediaExtractor;
+import android.media.MediaMuxer;
+import android.media.MediaFormat;
+import java.nio.ByteBuffer;
 
 import com.android.apksig.ApkSigner;
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader;
@@ -92,6 +96,8 @@ public class MainActivity extends Activity {
     private File pendingSubtitleExport;
     private File pendingVoiceExport;
     private File pendingTrimExport;
+    private EditText trimStartInput, trimEndInput, splitAtInput;
+    private TextView timelineStatus;
     private String extractedPdfText = "";
     private android.speech.tts.TextToSpeech localTts;
     private TextView voiceStatus;
@@ -834,7 +840,7 @@ public class MainActivity extends Activity {
             File temp = null;
             try (InputStream in = getContentResolver().openInputStream(uri)) {
                 if (in == null) throw new Exception("Cannot open selected video.");
-                File dir = new File(getCacheDir(), "video_imports");
+                File dir = new File(getFilesDir(), "production/media");
                 if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create import folder.");
                 temp = new File(dir, "gi_video_" + System.currentTimeMillis() + ".mp4");
                 try (OutputStream out = new FileOutputStream(temp)) {
@@ -1169,29 +1175,231 @@ public class MainActivity extends Activity {
     }
 
     private void showVideoTools() {
-        beginPage("VIDEO CLIP WORKSPACE • OFFLINE");
-        heading("🎥  LOCAL VIDEO ASSETS");
-        paragraph("Import a local clip for inspection. This first offline build keeps the original file untouched; codec-safe trim and multi-track rendering will be added only after device/build validation.");
-        if (importedVideoFile != null && importedVideoFile.isFile()) {
-            try {
-                android.media.MediaMetadataRetriever retriever = new android.media.MediaMetadataRetriever();
-                retriever.setDataSource(importedVideoFile.getAbsolutePath());
-                String duration = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
-                String width = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
-                String height = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT);
-                String rotation = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
-                retriever.release();
-                heading("CLIP INSPECTOR");
-                paragraph("File: " + importedVideoFile.getName() + "\nSize: " + formatBytes(importedVideoFile.length()) +
-                    "\nDuration: " + (duration == null ? "Unknown" : duration + " ms") +
-                    "\nResolution: " + (width == null ? "?" : width) + " × " + (height == null ? "?" : height) +
-                    "\nRotation: " + (rotation == null ? "0" : rotation) + "°");
-            } catch (Exception e) { paragraph("Clip imported. Metadata unavailable: " + e.getMessage()); }
-        } else {
-            paragraph("No local video imported yet.");
+        beginPage("OPENMONTAGE • CYBER VIDEO EDITOR");
+        heading("🎬  VIDEO EDITOR");
+        paragraph("Offline editor workspace. Trim and Split use Android MediaExtractor/MediaMuxer to remux selected time ranges without re-encoding. Cuts align to available encoded sample/keyframe boundaries; this preserves quality and avoids heavy processing on ARMv7.");
+        if (importedVideoFile == null || !importedVideoFile.isFile()) {
+            paragraph("No video selected yet. Import a local video first.");
+            button("📂 IMPORT VIDEO FROM PHONE / URL", () -> showUrlVideoImport());
+            button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
+            return;
         }
-        button("IMPORT VIDEO FROM PHONE / URL", () -> showUrlVideoImport());
+        long durationMs = getVideoDurationMs(importedVideoFile);
+        heading("📼  SOURCE CLIP");
+        paragraph(importedVideoFile.getName() + "\n" + formatBytes(importedVideoFile.length()) +
+            "\nDuration: " + (durationMs > 0 ? formatTimeMs(durationMs) : "Unknown"));
+        heading("✂️  TRIM RANGE");
+        trimStartInput = field("Start time (milliseconds)", false);
+        trimStartInput.setText("0");
+        trimEndInput = field("End time (milliseconds)", false);
+        trimEndInput.setText(String.valueOf(Math.max(1000, durationMs)));
+        button("✂️ EXPORT TRIMMED CLIP", () -> {
+            long startMs = parseTimeField(trimStartInput, -1);
+            long endMs = parseTimeField(trimEndInput, -1);
+            if (startMs < 0 || endMs <= startMs) { toast("Enter a valid start and end time in milliseconds."); return; }
+            runVideoExport("Trim", () -> exportVideoSegment(importedVideoFile, startMs, endMs, "trim"));
+        });
+        heading("🔪  SPLIT CLIP");
+        splitAtInput = field("Split point (milliseconds)", false);
+        splitAtInput.setText(String.valueOf(Math.max(1, durationMs / 2)));
+        button("🔪 SPLIT INTO TWO CLIPS", () -> {
+            long splitMs = parseTimeField(splitAtInput, -1);
+            if (splitMs <= 0 || durationMs <= 0 || splitMs >= durationMs) { toast("Split point must be inside the video duration."); return; }
+            runVideoExport("Split", () -> {
+                File first = exportVideoSegment(importedVideoFile, 0, splitMs, "split_a");
+                File second = exportVideoSegment(importedVideoFile, splitMs, durationMs, "split_b");
+                addTimelineItem(first, 0, splitMs, "Video A");
+                addTimelineItem(second, splitMs, durationMs, "Video B");
+                return first;
+            });
+        });
+        heading("🧩  MULTI-TRACK TIMELINE");
+        paragraph("Timeline project data is stored locally as editable clip entries. Add the original source or exported segments to the Video track.");
+        button("＋ ADD SOURCE TO TIMELINE", () -> {
+            try {
+                addTimelineItem(importedVideoFile, 0, durationMs, "Source clip");
+                toast("Added to local timeline.");
+                showVideoTools();
+            } catch (Exception e) { toast("Timeline save failed: " + e.getMessage()); }
+        });
+        button("🎞️ OPEN TIMELINE", () -> showTimeline());
+        button("💬 OPEN SUBTITLE TRACK", () -> showSubtitleStudio());
+        button("🎚️ AUDIO TRACK / MIXING", () -> showAudioMixingInfo());
         button("BACK TO VIDEO STUDIO", () -> showVideoStudio());
+    }
+
+    private long getVideoDurationMs(File file) {
+        android.media.MediaMetadataRetriever r = new android.media.MediaMetadataRetriever();
+        try {
+            r.setDataSource(file.getAbsolutePath());
+            String d = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION);
+            return d == null ? 0 : Long.parseLong(d);
+        } catch (Exception ignored) { return 0; }
+        finally { try { r.release(); } catch (Exception ignored) {} }
+    }
+
+    private String formatTimeMs(long ms) {
+        long total = Math.max(0, ms / 1000);
+        return String.format(java.util.Locale.US, "%02d:%02d:%02d.%03d",
+            total / 3600, (total / 60) % 60, total % 60, ms % 1000);
+    }
+
+    private long parseTimeField(EditText field, long fallback) {
+        try { return Long.parseLong(field.getText().toString().trim()); }
+        catch (Exception e) { return fallback; }
+    }
+
+    private interface VideoExportTask { File run() throws Exception; }
+
+    private void runVideoExport(String label, VideoExportTask task) {
+        toast(label + " export started. Keep the app open.");
+        new Thread(() -> {
+            try {
+                File output = task.run();
+                runOnUiThread(() -> {
+                    toast(label + " exported: " + output.getName());
+                    showVideoTools();
+                });
+            } catch (Exception e) {
+                String message = e.getMessage() == null ? "Video export failed." : e.getMessage();
+                runOnUiThread(() -> toast(label + " failed: " + message));
+            }
+        }).start();
+    }
+
+    private File exportVideoSegment(File source, long startMs, long endMs, String prefix) throws Exception {
+        if (source == null || !source.isFile()) throw new Exception("Source video is missing.");
+        File dir = new File(getFilesDir(), "production/exports");
+        if (!dir.exists() && !dir.mkdirs()) throw new Exception("Cannot create export folder.");
+        File output = new File(dir, prefix + "_" + System.currentTimeMillis() + ".mp4");
+        MediaExtractor extractor = new MediaExtractor();
+        MediaMuxer muxer = null;
+        boolean muxerStarted = false;
+        try {
+            extractor.setDataSource(source.getAbsolutePath());
+            int trackCount = extractor.getTrackCount();
+            int[] trackMap = new int[trackCount];
+            java.util.Arrays.fill(trackMap, -1);
+            muxer = new MediaMuxer(output.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+            for (int i = 0; i < trackCount; i++) {
+                MediaFormat format = extractor.getTrackFormat(i);
+                String mime = format.getString(MediaFormat.KEY_MIME);
+                if (mime != null && (mime.startsWith("video/") || mime.startsWith("audio/"))) {
+                    trackMap[i] = muxer.addTrack(format);
+                }
+            }
+            if (muxer == null) throw new Exception("No supported audio/video tracks found.");
+            try {
+                android.media.MediaMetadataRetriever meta = new android.media.MediaMetadataRetriever();
+                meta.setDataSource(source.getAbsolutePath());
+                String rotation = meta.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+                meta.release();
+                if (rotation != null) muxer.setOrientationHint(Integer.parseInt(rotation));
+            } catch (Exception ignored) {}
+            muxer.start();
+            muxerStarted = true;
+            long startUs = startMs * 1000L;
+            long endUs = endMs * 1000L;
+            extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
+            ByteBuffer buffer = ByteBuffer.allocate(16 * 1024 * 1024);
+            MediaMuxer activeMuxer = muxer;
+            android.media.MediaCodec.BufferInfo info = new android.media.MediaCodec.BufferInfo();
+            int written = 0;
+            while (true) {
+                int inTrack = extractor.getSampleTrackIndex();
+                if (inTrack < 0) break;
+                long timeUs = extractor.getSampleTime();
+                if (timeUs < 0 || timeUs >= endUs) break;
+                int outTrack = inTrack < trackMap.length ? trackMap[inTrack] : -1;
+                if (outTrack >= 0 && timeUs >= startUs) {
+                    buffer.clear();
+                    int size = extractor.readSampleData(buffer, 0);
+                    if (size < 0) break;
+                    info.set(0, size, Math.max(0, timeUs - startUs), extractor.getSampleFlags());
+                    activeMuxer.writeSampleData(outTrack, buffer, info);
+                    written++;
+                }
+                if (!extractor.advance()) break;
+            }
+            if (written == 0) throw new Exception("No media samples found in this range. Try a wider range or move the cut to a nearby keyframe.");
+            if (output.length() < 1024) throw new Exception("Export file is unexpectedly small.");
+            addTimelineItem(output, 0, Math.max(0, endMs - startMs), prefix);
+            return output;
+        } catch (Exception e) {
+            if (output.exists()) output.delete();
+            throw e;
+        } finally {
+            try { extractor.release(); } catch (Exception ignored) {}
+            if (muxer != null) {
+                try { if (muxerStarted) muxer.stop(); } catch (Exception ignored) {}
+                try { muxer.release(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
+
+    private File timelineFile() {
+        File dir = new File(getFilesDir(), "production/timeline");
+        if (!dir.exists()) dir.mkdirs();
+        return new File(dir, "timeline.json");
+    }
+
+    private void addTimelineItem(File file, long startMs, long endMs, String label) throws Exception {
+        if (file == null || !file.isFile()) throw new Exception("Timeline media file is missing.");
+        File timeline = timelineFile();
+        JSONArray items = new JSONArray();
+        if (timeline.isFile()) {
+            try (InputStream in = new FileInputStream(timeline)) {
+                byte[] data = readAll(in);
+                items = new JSONArray(new String(data, java.nio.charset.StandardCharsets.UTF_8));
+            } catch (Exception ignored) { items = new JSONArray(); }
+        }
+        JSONObject item = new JSONObject();
+        item.put("track", "video");
+        item.put("label", label);
+        item.put("path", file.getAbsolutePath());
+        item.put("startMs", startMs);
+        item.put("endMs", endMs);
+        item.put("durationMs", Math.max(0, endMs - startMs));
+        item.put("createdAt", System.currentTimeMillis());
+        items.put(item);
+        try (FileOutputStream out = new FileOutputStream(timeline)) {
+            out.write(items.toString(2).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    private void showTimeline() {
+        beginPage("MULTI-TRACK TIMELINE • LOCAL PROJECT");
+        heading("🎞️  TIMELINE TRACKS");
+        File timeline = timelineFile();
+        if (!timeline.isFile()) {
+            paragraph("No timeline clips yet. Import a video and add it to the timeline.");
+        } else {
+            try (InputStream in = new FileInputStream(timeline)) {
+                JSONArray items = new JSONArray(new String(readAll(in), java.nio.charset.StandardCharsets.UTF_8));
+                for (int i = 0; i < items.length(); i++) {
+                    JSONObject item = items.getJSONObject(i);
+                    String track = item.optString("track", "video").toUpperCase(java.util.Locale.ROOT);
+                    String label = item.optString("label", "Clip");
+                    long duration = item.optLong("durationMs", 0);
+                    paragraph("[" + track + " TRACK] " + label + "\n" +
+                        formatTimeMs(item.optLong("startMs", 0)) + " → " +
+                        formatTimeMs(item.optLong("endMs", 0)) + "\n" +
+                        "Duration: " + formatTimeMs(duration));
+                }
+                if (items.length() == 0) paragraph("Timeline is empty.");
+            } catch (Exception e) { paragraph("Timeline data could not be read: " + e.getMessage()); }
+        }
+        paragraph("Project file: " + timeline.getAbsolutePath());
+        button("REFRESH TIMELINE", () -> showTimeline());
+        button("BACK TO VIDEO EDITOR", () -> showVideoTools());
+    }
+
+    private void showAudioMixingInfo() {
+        beginPage("AUDIO MIXER • LOCAL TRACK");
+        heading("🎚️  AUDIO MIXING");
+        paragraph("Audio track planning is saved as part of the local timeline design, but this build does not yet mix, normalize, or encode multiple audio streams. A real offline mixer needs decode + resample + mix + encode, then mux with the video; this is the next rendering-engine stage.");
+        button("BACK TO VIDEO EDITOR", () -> showVideoTools());
     }
 
     private void showProjectExplorer() {
