@@ -2,7 +2,7 @@ name: Build G I KO KO STUDIO APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/cyber-openmontage-offline-first]
   workflow_dispatch:
 
 permissions:
@@ -48,7 +48,7 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: G-I-KO-KO-STUDIO-0.0.1
+          name: G-I-KO-KO-STUDIO-0.1.0
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
           if-no-files-found: error
