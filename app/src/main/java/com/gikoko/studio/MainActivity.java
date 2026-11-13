@@ -2318,7 +2318,8 @@ public class MainActivity extends Activity {
             openPhoneFile(uri, name);
         } else if (requestCode == PICK_VIDEO_URL) {
             importVideoFromPhone(uri);
-            showUrlVideoImport();\n        } else if (requestCode == PICK_PROJECT_ZIP) {
+            showUrlVideoImport();
+        } else if (requestCode == PICK_PROJECT_ZIP) {
             importProjectZip(uri);
         } else if (requestCode == SAVE_PROJECT_ZIP || requestCode == SAVE_WEB_BUILD) {
             if (pendingExport == null) { toast("Export file is missing."); return; }
