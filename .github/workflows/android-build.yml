@@ -52,6 +52,14 @@ jobs:
           grep -Fq 'APP_ABI := ${ANDROID_ARCHITECTURES}' scripts/function-android.sh
           sed -i '/APP_ABI := ${ANDROID_ARCHITECTURES}/a APP_ARM_NEON := true' scripts/function-android.sh
           grep -A1 -F 'APP_ABI := ${ANDROID_ARCHITECTURES}' scripts/function-android.sh
+      - name: Patch FFmpegKit LTS ARMv7 NEON JNI target
+        working-directory: ffmpegkit-src/android-8.1-lts
+        run: |
+          set -eu
+          FILE=android/jni/Android.mk
+          grep -Fq 'MY_ARM_NEON := false' "$FILE"
+          sed -i '/ifeq ("$(shell test -e $(MY_LOCAL_PATH)\/\.\.\/build\/\.lts && echo lts)","lts")/,/endif/s/MY_ARM_NEON := false/MY_ARM_NEON := true/' "$FILE"
+          grep -n -A3 -B1 'MY_ARM_NEON :=' "$FILE" | head -20
       - name: Build FFmpegKit for armeabi-v7a only
         working-directory: ffmpegkit-src/android-8.1-lts
         run: |
