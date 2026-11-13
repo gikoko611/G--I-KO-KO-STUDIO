@@ -20,6 +20,7 @@ android {
     }
 }
 
-dependencies {\n    implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
+dependencies {
+    implementation 'com.tom-roush:pdfbox-android:2.0.27.0'
     implementation 'com.android.tools.build:apksig:8.7.3'
 }
