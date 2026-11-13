@@ -1,41 +1,40 @@
-# G I KO KO STUDIO
+# G.I KO KO STUDIO — Offline-First Creative Production
 
-Android-native mobile development workspace with a modern cyber-green interface.
+**Version:** 0.1.0  
+**Package:** `com.gikoko.studio`  
+**Target:** Android 6+; designed for Android 10 / Redmi 9A / ARMv7 Java-only compatibility.
 
-- App label: **G I KO KO STUDIO**
-- Version: **0.0.1**
-- Application ID: `com.gikoko.studio`
-- Minimum Android: 6.0 (API 23)
-- Target device: Redmi 9A / Android 10 / ARMv7
-- Local workspace: ZIP import and safe extraction into app-private storage
-- Web projects: offline preview for projects containing `index.html`, and export a packaged source ZIP
-- Android projects: source ZIP import/export and Termux local-build guide
-- APK signing: local signing with a user-provided JKS/PKCS12 keystore
-- Plugin manager: JSON manifest import, listing, enable/disable and remove
+## Production Studio
 
-## Local ZIP workflow
-1. Open **LOCAL BUILD CENTER • ZIP IMPORT**.
-2. Select a project ZIP using Android's file picker.
-3. The app extracts it locally, rejects path-traversal ZIP entries, limits extraction to 200 MB, and attempts to detect web vs Android source projects.
-4. For a static web app, use **PREVIEW WEB APP OFFLINE** or **PACKAGE WEB PROJECT ZIP**.
-5. For an Android source project, export the ZIP and use Termux with a compatible JDK, Android SDK and Gradle installation.
+The refreshed Studio UI uses a sharp cyber palette (neon blue, cyan/green and red), animated icon cards, and a mobile-first layout. The original app logo and launcher icons are retained.
 
-## Online and offline modes
+### Offline-first tools
+- **PDF source import:** imports PDF files into private app storage and extracts selectable text locally with PDFBox-Android. Scanned/image-only PDFs require OCR and are not yet supported.
+- **Script workspace:** edit and save narration drafts locally.
+- **Subtitle Lab:** edit SubRip (.srt) text and export it to phone storage.
+- **Offline Voice Studio:** uses the Android Text-to-Speech engine; available languages depend on installed system voice data. English voice data may need to be downloaded once in Android settings.
+- **Local video assets:** import direct HTTPS video URLs or local phone videos and inspect duration/resolution. Imported clips are retained in app-private storage.
 
-The app exposes two build modes:
+### Existing tools retained
+- Project Explorer and ZIP import
+- Text Code Editor for imported projects
+- Local Build Center, offline static web preview and ZIP export
+- GitHub Actions APK build entry point
+- APK signer using a user-provided keystore
+- AI Assistant with custom provider settings
+- Phone File Manager with user-granted Storage Access Framework permissions
+- Plugin Manager (JSON manifests and restricted safe actions)
+- Device diagnostics and About page
 
-- **Online mode:** opens the GitHub Actions cloud workflow and repository build logs. The current workflow builds this Studio repository and uploads a debug APK artifact. It does not yet upload arbitrary imported project ZIPs to a cloud build job.
-- **Offline mode:** imports project ZIPs into app-private storage. Static HTML web projects can be previewed offline and packaged into a source ZIP. Android source projects can be edited/exported locally and handed off to Termux for a native build.
+## Online is optional
+Internet is only needed for optional AI provider calls, plugin catalog downloads, direct URL media imports and GitHub Actions. PDF text extraction, script editing, subtitle authoring and Android TTS run locally. The app does not claim to run large generative video models locally; Redmi 9A's 32-bit ARMv7 CPU/RAM are not suitable for that workload.
 
-## Important native-build limitation
-
-This app does **not** bundle the Android SDK, Gradle, JDK, Node.js or all Maven/NPM dependencies. Therefore it cannot independently promise a one-tap, fully offline APK build for arbitrary native projects. Native Android builds need a compatible toolchain and all required dependencies already installed/cached on the device. On a 32-bit Redmi 9A this is constrained by ARMv7 support, memory and storage. The Termux guide uses `gradle --offline assembleDebug`; this only works after the required Gradle plugins, Android platform/build-tools and dependencies have been cached.
-
-The offline web workflow is a preview and source-ZIP packaging workflow, not a compiler for every React/Vite/Angular framework. Framework web projects need generated static output (such as `dist/index.html`) included in the ZIP for preview/package.
-
-The GitHub Actions workflow runs on pushes to `main` and can also be started manually from the Actions page.
+## Build
+GitHub Actions builds a debug APK using Java 17 and Gradle 8.9. The APK is a Java app and does not bundle ARM64-only native libraries. Use Actions artifacts to download the APK after a successful workflow run.
 
 ## Security
-- Imported ZIPs are extracted into private app storage; unsafe paths and overlarge extraction are rejected.
-- APK signing uses a local selected keystore. Never share its private key or passwords.
-- Plugin manifests are treated as data only; arbitrary plugin code is not executed.
+- PDFs and imported videos are stored in app-private storage.
+- PDF imports are limited to 100 MB; local video imports are limited to 300 MB.
+- ZIP import keeps its path-traversal and extraction-size protections.
+- Plugin manifests are data only; arbitrary plugin code is not executed.
+- Never share APK signing keystores or passwords.
