@@ -1208,8 +1208,6 @@ public class MainActivity extends Activity {
             runVideoExport("Split", () -> {
                 File first = exportVideoSegment(importedVideoFile, 0, splitMs, "split_a");
                 File second = exportVideoSegment(importedVideoFile, splitMs, durationMs, "split_b");
-                addTimelineItem(first, 0, splitMs, "Video A");
-                addTimelineItem(second, splitMs, durationMs, "Video B");
                 return first;
             });
         });
@@ -1286,6 +1284,7 @@ public class MainActivity extends Activity {
                 String mime = format.getString(MediaFormat.KEY_MIME);
                 if (mime != null && (mime.startsWith("video/") || mime.startsWith("audio/"))) {
                     trackMap[i] = muxer.addTrack(format);
+                    extractor.selectTrack(i);
                 }
             }
             if (muxer == null) throw new Exception("No supported audio/video tracks found.");
@@ -1301,6 +1300,8 @@ public class MainActivity extends Activity {
             long startUs = startMs * 1000L;
             long endUs = endMs * 1000L;
             extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC);
+            long actualStartUs = extractor.getSampleTime();
+            if (actualStartUs < 0) actualStartUs = startUs;
             ByteBuffer buffer = ByteBuffer.allocate(16 * 1024 * 1024);
             MediaMuxer activeMuxer = muxer;
             android.media.MediaCodec.BufferInfo info = new android.media.MediaCodec.BufferInfo();
@@ -1311,11 +1312,11 @@ public class MainActivity extends Activity {
                 long timeUs = extractor.getSampleTime();
                 if (timeUs < 0 || timeUs >= endUs) break;
                 int outTrack = inTrack < trackMap.length ? trackMap[inTrack] : -1;
-                if (outTrack >= 0 && timeUs >= startUs) {
+                if (outTrack >= 0) {
                     buffer.clear();
                     int size = extractor.readSampleData(buffer, 0);
                     if (size < 0) break;
-                    info.set(0, size, Math.max(0, timeUs - startUs), extractor.getSampleFlags());
+                    info.set(0, size, Math.max(0, timeUs - actualStartUs), extractor.getSampleFlags());
                     activeMuxer.writeSampleData(outTrack, buffer, info);
                     written++;
                 }
