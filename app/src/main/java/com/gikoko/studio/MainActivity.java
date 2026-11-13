@@ -1092,7 +1092,8 @@ public class MainActivity extends Activity {
                 try (FileOutputStream out = new FileOutputStream(pendingSubtitleExport)) {
                     out.write(editor.getText().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 }
-                toast("SRT saved locally.");
+                try { addTimelineItem(pendingSubtitleExport, 0, getSrtDurationMs(pendingSubtitleExport), "Myanmar SRT", "subtitle"); } catch (Exception ignored) {}
+                toast("SRT saved locally and added to subtitle track.");
             } catch (Exception e) { toast("SRT save failed: " + e.getMessage()); }
         });
         button("EXPORT SRT TO PHONE", () -> {
@@ -1369,6 +1370,10 @@ public class MainActivity extends Activity {
     }
 
     private void addTimelineItem(File file, long startMs, long endMs, String label) throws Exception {
+        addTimelineItem(file, startMs, endMs, label, "video");
+    }
+
+    private void addTimelineItem(File file, long startMs, long endMs, String label, String track) throws Exception {
         if (file == null || !file.isFile()) throw new Exception("Timeline media file is missing.");
         File timeline = timelineFile();
         JSONArray items = new JSONArray();
@@ -1379,7 +1384,7 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) { items = new JSONArray(); }
         }
         JSONObject item = new JSONObject();
-        item.put("track", "video");
+        item.put("track", track);
         item.put("label", label);
         item.put("path", file.getAbsolutePath());
         item.put("startMs", startMs);
@@ -1392,26 +1397,73 @@ public class MainActivity extends Activity {
         }
     }
 
+    private long getSrtDurationMs(File srt) {
+        long last = 0;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(srt), java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.contains("-->")) continue;
+                String[] times = line.split("-->");
+                if (times.length < 2) continue;
+                String[] parts = times[1].trim().replace(',', '.').split(":");
+                if (parts.length != 3) continue;
+                long h = Long.parseLong(parts[0]);
+                long m = Long.parseLong(parts[1]);
+                double sec = Double.parseDouble(parts[2]);
+                last = Math.max(last, (h * 3600L + m * 60L) * 1000L + (long)(sec * 1000));
+            }
+        } catch (Exception ignored) {}
+        return last;
+    }
+
+    private void addTimelineTrackRow(String label, String trackType, JSONArray items, int accent) throws Exception {
+        ArrayList<JSONObject> selected = new ArrayList<>();
+        long total = 0;
+        for (int i = 0; i < items.length(); i++) {
+            JSONObject item = items.optJSONObject(i);
+            if (item != null && trackType.equalsIgnoreCase(item.optString("track", "video"))) {
+                selected.add(item);
+                total += Math.max(1, item.optLong("durationMs", 1));
+            }
+        }
+        heading(label);
+        if (selected.isEmpty()) {
+            paragraph("— no clips —");
+            return;
+        }
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        for (int i = 0; i < selected.size(); i++) {
+            JSONObject item = selected.get(i);
+            long duration = Math.max(1, item.optLong("durationMs", 1));
+            TextView block = text((i + 1) + " • " + item.optString("label", "Clip"), 9, Color.WHITE, true);
+            block.setGravity(Gravity.CENTER);
+            block.setMaxLines(2);
+            block.setPadding(dp(4), dp(4), dp(4), dp(4));
+            block.setBackground(shape(Color.rgb(8, 34, 58), accent));
+            LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(0, dp(54), (float)duration);
+            bp.rightMargin = dp(4);
+            row.addView(block, bp);
+        }
+        page.addView(row, new LinearLayout.LayoutParams(-1, dp(58)));
+        paragraph(selected.size() + " clip(s) • total " + formatTimeMs(total));
+    }
+
     private void showTimeline() {
         beginPage("MULTI-TRACK TIMELINE • LOCAL PROJECT");
-        heading("🎞️  TIMELINE TRACKS");
+        heading("🎞️  VISUAL TIMELINE");
         File timeline = timelineFile();
         if (!timeline.isFile()) {
             paragraph("No timeline clips yet. Import a video and add it to the timeline.");
         } else {
             try (InputStream in = new FileInputStream(timeline)) {
                 JSONArray items = new JSONArray(new String(readAll(in), java.nio.charset.StandardCharsets.UTF_8));
-                for (int i = 0; i < items.length(); i++) {
-                    JSONObject item = items.getJSONObject(i);
-                    String track = item.optString("track", "video").toUpperCase(java.util.Locale.ROOT);
-                    String label = item.optString("label", "Clip");
-                    long duration = item.optLong("durationMs", 0);
-                    paragraph("[" + track + " TRACK] " + label + "\n" +
-                        formatTimeMs(item.optLong("startMs", 0)) + " → " +
-                        formatTimeMs(item.optLong("endMs", 0)) + "\n" +
-                        "Duration: " + formatTimeMs(duration));
-                }
+                addTimelineTrackRow("🎥 VIDEO TRACK • V1", "video", items, Color.rgb(0, 190, 255));
+                addTimelineTrackRow("🎚️ AUDIO TRACK • A1", "audio", items, Color.rgb(0, 235, 145));
+                addTimelineTrackRow("💬 SUBTITLE TRACK • S1", "subtitle", items, Color.rgb(255, 65, 105));
                 if (items.length() == 0) paragraph("Timeline is empty.");
+                paragraph("Track data is saved locally. Clip blocks are displayed in sequence; trim in/out points are retained in the project JSON.");
             } catch (Exception e) { paragraph("Timeline data could not be read: " + e.getMessage()); }
         }
         paragraph("Project file: " + timeline.getAbsolutePath());
@@ -1461,6 +1513,7 @@ public class MainActivity extends Activity {
                 }
                 if (target.length() < 512) throw new Exception("Audio file is empty.");
                 File imported = target;
+                try { addTimelineItem(imported, 0, getVideoDurationMs(imported), voice ? "Voiceover" : "Background music", "audio"); } catch (Exception ignored) {}
                 runOnUiThread(() -> {
                     if (voice) importedVoiceTrack = imported; else importedMusicTrack = imported;
                     toast((voice ? "Voiceover" : "Music") + " imported locally.");
